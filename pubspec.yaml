@@ -1,0 +1,42 @@
+name: sky_map
+description: A Flutter application for visualizing the night sky.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # UI and design
+  cupertino_icons: ^1.0.8
+  google_fonts: ^4.0.4
+  # Location and sensors (essential for sky mapping)
+  geolocator: ^9.0.2
+  permission_handler: ^10.2.0
+  sensors_plus: ^3.0.0
+  flutter_compass: ^0.7.0
+  geocoding: ^2.1.1
+  vibration: ^1.7.7
+  http: ^1.2.1
+  path_provider: ^2.1.3
+  motion_sensors: ^0.1.0
+  vector_math: ^2.1.4
+  intl: ^0.18.0
+  # Data handling and sharing
+  share_plus: ^10.1.4
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  
+  # Uncomment and add any assets needed for the sky map
+  # assets:
+  #   - assets/images/
+  #   - assets/data/
