@@ -43,3 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# FoamForge (Python)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+# Exports régénérables du projet d'exemple (python -m foamforge.examples.create_demo_project)
+foamforge/examples/*.svg
+foamforge/examples/*.dxf
+foamforge/examples/*.pdf
+foamforge/examples/*_checklist.html

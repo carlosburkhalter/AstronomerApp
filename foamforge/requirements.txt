@@ -1,0 +1,10 @@
+# Dépendances FoamForge — Python 3.11+ recommandé (3.12 supporté)
+PySide6>=6.6
+shapely>=2.0
+opencv-python>=4.8
+Pillow>=10.0
+ezdxf>=1.1
+numpy>=1.26
+
+# Développement / tests
+pytest>=8.0
