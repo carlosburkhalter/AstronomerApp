@@ -1,0 +1,269 @@
+================================================================================
+FOAMFORGE — RÉSUMÉ TECHNIQUE DÉTAILLÉ DU PROJET
+================================================================================
+
+1. VUE D'ENSEMBLE
+--------------------------------------------------------------------------------
+Type            : Application desktop CAD/CAM légère (conception de mousses de
+                  protection découpables laser/CNC)
+Langage         : Python 3.11+ (typé, from __future__ import annotations)
+UI              : PySide6 (Qt 6) — QGraphicsView / QGraphicsScene
+Géométrie       : Shapely 2.x (polygones, buffers, distances exactes, STRtree)
+Vision          : OpenCV (calibration A4, détection de contours)
+                  + Pillow (chargement, EXIF, rendus)
+Exports         : SVG natif (xml.etree), DXF via ezdxf, PDF/PNG via Pillow, HTML
+Stockage        : JSON versionné pour les projets, SQLite pour la bibliothèque
+Volume          : 45 fichiers, ~4 900 lignes, 46 tests pytest (100 % verts)
+Branche         : claude/foamforge-mvp-ngqs7h, commit e2fca93
+Unité interne   : le millimètre, partout ; précision d'export 0,01 mm
+
+Principe directeur de l'architecture : le cœur métier ne dépend jamais de Qt.
+core/, export/, vision/ et database/ sont importables et testables sans écran ;
+l'UI est une couche d'orchestration au-dessus. MVC pragmatique : les dataclasses
+de core/ sont le modèle, les widgets de ui/ sont les vues, MainWindow et
+FoamCanvas font office de contrôleurs.
+
+
+2. ARBORESCENCE ET RESPONSABILITÉS
+--------------------------------------------------------------------------------
+foamforge/
+├── app/        main.py (CLI + bootstrap), main_window.py (assemblage, menus,
+│               validation différée)
+├── core/       units.py, geometry.py, project.py, validation.py, nesting.py
+├── ui/         canvas.py, toolbars.py, property_panel.py, alerts_panel.py,
+│               dialogs.py
+├── vision/     image_import.py, calibration.py, contour_detection.py
+├── export/     __init__.py (calques), svg_exporter.py, dxf_exporter.py,
+│               pdf_exporter.py
+├── database/   db.py (schéma), object_library.py (CRUD/recherche/import-export)
+├── examples/   create_demo_project.py + valise_astro_demo.foamforge.json + .png
+└── tests/      9 modules de tests
+
+
+3. MODÈLE DE DONNÉES (core/)
+--------------------------------------------------------------------------------
+3.1 Formes — geometry.py
+- Hiérarchie de dataclasses : Shape (base abstraite) → RectShape, CircleShape,
+  EllipseShape, PolygonShape, TextShape. Chaque forme porte x_mm/y_mm (centre),
+  rotation_deg, un id (uuid hex 12) et une CutoutSpec.
+- CutoutSpec regroupe les paramètres de fabrication : name, depth_mm, margin_mm
+  (tolérance), corner_radius_mm, cut_type (FULL/POCKET/ENGRAVE), cut_order,
+  comment, weight_g.
+- Pipeline géométrique (le cœur de la précision) :
+  1) base_polygon()   : polygone local centré sur l'origine (cercles/ellipses
+     tessellés à 32 segments/quart, flèche < 0,01 mm) ;
+  2) object_polygon() : rotation + translation dans le repère plaque ;
+  3) cut_polygon()    : marge appliquée par buffer(margin, join_style="round"),
+     puis arrondi des angles par ouverture morphologique buffer(-r).buffer(+r) :
+     seuls les angles convexes sont adoucis, la découpe reste incluse dans son
+     offset (garanti pour la fabrication). Si la forme est trop petite pour le
+     rayon, repli silencieux sur la version non arrondie.
+- TextShape force cut_type=ENGRAVE et margin=0 dans __post_init__ ; son
+  encombrement pour la validation est estimé par boîte
+  (0,62 × hauteur × nb caractères).
+- PolygonShape.from_polygon() recentre un polygone Shapely sur son centroïde
+  (pont avec la vision) ; buffer(0) répare les auto-intersections ; un polygone
+  dégénéré (< 3 points) retombe sur un disque minuscule plutôt que de casser
+  validation/export.
+- Sérialisation : to_dict()/shape_from_dict() (fabrique par ShapeKind),
+  round-trip strict testé.
+
+3.2 Projet — project.py
+- Project : nom, dimensions valise (info), FoamSheet (L×H×épaisseur, origine
+  coin haut-gauche), layer_count, type de mousse, couleurs mousse/fond, règles
+  de sécurité paramétrables (min_spacing_mm=8, min_border_mm=12), pas de
+  grille, notes, liste de formes.
+- Persistance : JSON indenté UTF-8 (.foamforge.json), schema_version=1, rejet
+  explicite des schémas plus récents (ValueError). add_shape() auto-incrémente
+  l'ordre de découpe.
+- checklist_items() : objets attendus dans l'ordre de découpe, textes gravés
+  exclus.
+
+
+4. VALIDATION — validation.py
+--------------------------------------------------------------------------------
+Produit des Issue(severity, code, message, shape_ids) avec trois niveaux :
+ERROR (rouge, bloquant), WARNING (orange), OK (vert). Les contrôles travaillent
+sur les cut_polygon() (marges incluses), textes exclus des distances.
+
+  Code                     Règle                                       Gravité
+  -----------------------  ------------------------------------------  -------
+  depth_exceeds_thickness  profondeur poche > épaisseur                rouge
+  thin_floor               fond de poche < 5 mm                        orange
+  outside_sheet            foam.contains(poly) faux                    rouge
+  border_too_close         distance bord < min/2                       rouge
+  border_close             distance bord < min                         orange
+  overlap                  intersects() entre deux découpes            rouge
+  wall_too_thin            paroi < min/2                               rouge
+  wall_thin                paroi < min                                 orange
+  weight_unbalanced        centre de masse décalé > 25 % demi-plaque   orange
+
+Les distances sont des distances euclidiennes exactes Shapely (pas de boîtes
+englobantes). Conception parfaite → unique alerte verte. worst_severity()
+alimente le feu tricolore de la barre d'état, et bloque les exports SVG/DXF en
+présence de rouge.
+
+
+5. NESTING — nesting.py
+--------------------------------------------------------------------------------
+Glouton bottom-left sur grille de candidats (pas 5 mm), validation exacte de
+chaque candidat : foam.buffer(-min_border).contains(candidate) + non-
+intersection du candidat gonflé de min_spacing contre les pièces posées
+(pré-filtre spatial STRtree, vérification exacte ensuite).
+Trois stratégies = trois NestingProposal :
+- area_desc          : compacité (grandes pièces d'abord) ;
+- longest_side_desc  : pièces longues d'abord ;
+- weight_desc        : tri des positions par distance au centre → les objets
+                       lourds au milieu (répartition du poids).
+Pièces non plaçables rapportées dans unplaced_ids ; apply() déplace les formes
+du projet. Pas de rotation automatique (roadmap v0.5). Test clé : un projet
+volontairement chevauchant ressort sans aucune erreur bloquante après nesting.
+
+
+6. EXPORTS — export/
+--------------------------------------------------------------------------------
+Convention de calques unique (FOAM_BORDER, CUT_FULL, CUT_POCKET, ENGRAVE, TEXT,
+REFERENCE) avec couleurs SVG et indices ACI DXF associés.
+
+- SVG : width="...mm" + viewBox 1 unité = 1 mm (cote physique exacte dans
+  LightBurn/Inkscape), groupes <g id="CALQUE">, chemins fermés fill:none
+  stroke-width:0.2, trous gérés (anneaux intérieurs), <title> par découpe
+  (nom, type, profondeur, ordre = info-bulle opérateur), croix de calage aux
+  4 coins, texte en <text> ancré au centre avec rotation.
+- DXF : R2010, $INSUNITS=4 (mm), LWPOLYLINE fermées, entités TEXT
+  MIDDLE_CENTER. Point critique : inversion de l'axe Y (écran Y-bas → machine
+  Y-haut, y' = H − y, rotation des textes négativée) — vérifié par un test qui
+  relit le fichier avec ezdxf et contrôle les coordonnées machine d'un cercle
+  connu.
+- PDF/PNG : rendu raster Pillow à 150 dpi (mm_to_px), poches en mousse
+  éclaircie, découpes complètes laissant voir la couleur de fond, étiquettes
+  nom+profondeur ; PDF = page avec cartouche (date, plaque, matière, liste
+  d'objets) au-dessus du rendu.
+- Checklist HTML : cases à cocher imprimables, échappement html.escape, rappel
+  du principe « logement vide sur fond coloré = objet manquant ».
+
+Tout est arrondi via units.clean() → float(round(v, 2)) (le cast float corrige
+un vrai bug : round(400) rendait un int et changeait le format SVG).
+
+
+7. VISION — vision/
+--------------------------------------------------------------------------------
+- Calibration (calibration.py) : Otsu + plus grand quadrilatère convexe
+  (approxPolyDP à 2 % du périmètre, aire ≥ 5 % de l'image) = feuille A4 ;
+  échelle = moyenne grand côté/297 et petit côté/210, rejet si divergence
+  > 15 % (perspective trop forte, message utilisateur explicite). Alternative
+  manuelle scale_from_reference(px, mm) pour une règle.
+- Détection (contour_detection.py) : gris → flou gaussien → Otsu inversé →
+  ouverture+fermeture morphologiques → findContours en RETR_TREE avec trois
+  filtres : profondeur de hiérarchie paire (frontières extérieures de régions
+  sombres), contour ne touchant pas le bord de l'image (= fond), recouvrement
+  < 80 % avec le quad A4 (= la feuille elle-même). Ce choix corrige le cas réel
+  « fond de photo sombre » où RETR_EXTERNAL avalait les objets.
+  Vectorisation : Polygon → buffer(0) → simplify(0,5 mm) → lissage
+  anti-pixellisation buffer(0,8).buffer(−0,8).
+- Orchestration (image_import.py) : ImageImportSession à états (chargement
+  Pillow avec exif_transpose, redimensionnement à 2 200 px max AVANT
+  calibration donc sans perte de cote, garde-fous CalibrationError si étapes
+  dans le désordre), to_shapes(margin, depth) → PolygonShape prêtes à placer.
+
+
+8. BASE DE DONNÉES — database/
+--------------------------------------------------------------------------------
+- Schéma SQLite versionné par PRAGMA user_version, FK activées, base
+  utilisateur dans ~/.foamforge/library.sqlite3, :memory: pour les tests.
+  Tables categories (11 catégories seedées : caméras astro, roues à filtres,
+  oculaires, filtres, montures, accessoires photo, objectifs photo, drones,
+  batteries, câbles, outils) et objects (dimensions, poids, contour_json 2D
+  optionnel, profondeur/marge recommandées, tags CSV, index sur nom et
+  catégorie).
+- ObjectLibrary : CRUD complet, recherche LIKE (nom/marque/tags) × catégorie,
+  export/import JSON de bibliothèques entières, et LibraryObject.to_shape()
+  qui instancie un objet en PolygonShape (si contour) ou RectShape avec sa
+  spec recommandée — le pont bibliothèque → projet.
+
+
+9. INTERFACE — ui/ + app/
+--------------------------------------------------------------------------------
+- Canvas (canvas.py) : 1 unité scène = 1 mm. drawBackground peint fond de
+  valise, plaque, grille adaptative (10 mm toujours, 1 mm si zoom > 6×).
+  ShapeItem (attribut model, renommé pour ne pas masquer la méthode Qt shape()
+  utilisée au hit-testing) recalcule ses QPainterPath locaux depuis Shapely,
+  dessine la découpe remplie + le contour objet en pointillés (visualisation
+  de la marge) + étiquette nom/dimensions. Magnétisme dans
+  itemChange(ItemPositionChange) avec garde anti-réentrance _syncing ;
+  ItemPositionHasChanged écrit dans le modèle et notifie. Zoom molette ancré
+  sous le curseur, pan clic-milieu, tracé élastique pour
+  rectangle/cercle/ellipse, signal cursor_moved en mm.
+- Panneau propriétés : formulaire complet avec visibilité conditionnelle
+  double (par nature de forme × mode débutant/expert — rotation, arrondi,
+  ordre, poids, commentaire sont expert), garde _updating contre les boucles
+  signal → modèle → signal.
+- Alertes : liste triée rouge → orange → vert ; clic = sélection des formes
+  fautives sur le canvas (surlignées dans leur couleur de gravité).
+- MainWindow : docks droite/bas, toolbar gauche (raccourcis S/R/C/E/T, Ctrl+D,
+  Suppr, F), menus Projet/Édition/Affichage/Outils, validation différée par
+  QTimer single-shot 350 ms, dirty-tracking avec confirmation d'enregistrement
+  à la fermeture, table d'exporteurs unifiée.
+
+
+10. TESTS (46) ET VÉRIFICATIONS D'EXÉCUTION
+--------------------------------------------------------------------------------
+  Module            Couverture notable
+  ----------------  ----------------------------------------------------------
+  test_units        snap, conversions mm/px, formatage
+  test_geometry     round-trip sérialisation, marge ±0,05 mm, aire cercle
+                    < 0,1 %, arrondi (aire réduite, emprise conservée),
+                    rotation, indépendance des copies
+  test_project      round-trip JSON, ordre de découpe, checklist, rejet de
+                    schéma plus récent
+  test_validation   un test par règle, géométries calculées pour tomber pile
+                    dans chaque bande erreur/avertissement
+  test_nesting      résolution de chevauchements, respect post-hoc des parois
+                    et bords, cas non plaçable
+  test_exporters    parsing XML du SVG, relecture ezdxf (calques, unités,
+                    coordonnées machine), magic bytes PDF, exclusion des
+                    textes de la checklist
+  test_vision       photos synthétiques à cotes connues (4 px/mm) : échelle à
+                    ±2 %, aires/dimensions à ±5 %, flux complet de session,
+                    erreurs d'enchaînement
+  test_database     seed, CRUD, recherche croisée, round-trip import/export,
+                    to_shape
+  test_ui_smoke     rendu offscreen : construction fenêtre, ajout/sélection/
+                    duplication/suppression, alimentation panneau propriétés
+                    et alertes
+
+Vérifié en plus des tests : python -m foamforge.app.main démarre, charge le
+projet de démo et tourne dans la boucle d'événements ; le générateur d'exemple
+produit JSON + SVG + DXF + PNG + PDF + checklist avec validation verte.
+
+
+11. INSTALLATION ET LANCEMENT
+--------------------------------------------------------------------------------
+  pip install -r foamforge/requirements.txt
+  python -m foamforge.app.main                          # application
+  python -m foamforge.app.main foamforge/examples/valise_astro_demo.foamforge.json
+  python -m pytest foamforge/tests                      # tests
+  python -m foamforge.examples.create_demo_project      # régénère la démo
+
+Dépendances : PySide6 ≥ 6.6, shapely ≥ 2.0, opencv-python ≥ 4.8,
+Pillow ≥ 10.0, ezdxf ≥ 1.1, numpy ≥ 1.26, pytest ≥ 8.0 (dev).
+
+
+12. DETTE TECHNIQUE ASSUMÉE (ROADMAP)
+--------------------------------------------------------------------------------
+Redimensionnement/rotation uniquement via le panneau (pas de poignées canvas),
+pas d'undo/redo ni de groupes, UI bibliothèque et assistant photo non branchés
+(APIs prêtes et testées), nesting sans rotations, multi-couches stocké
+(layer_count) mais sans vue par couche, pas de compensation de kerf.
+
+Séquencement (détail dans foamforge/README.md) :
+  v0.2  confort d'édition : undo/redo, groupes, poignées, alignement, polygone
+  v0.3  UI bibliothèque + assistant photo 3 étapes + catalogue d'objets
+  v0.4  multi-couches, export par couche, kerf, ponts/attaches
+  v0.5  nesting avec rotations + métaheuristique, checklist PDF, QR valise
+  v1.0  installeurs signés, mises à jour auto, localisation, licences,
+        profils machine (LightBurn, Trotec, Epilog…)
+
+================================================================================
+Fin du résumé — généré le 2026-06-11
+================================================================================
