@@ -24,6 +24,12 @@ from PySide6.QtWidgets import (
 )
 
 from foamforge import __version__
+from foamforge.core.booleans import (
+    BooleanOperationError,
+    intersect_shapes,
+    merge_shapes,
+    subtract_shapes,
+)
 from foamforge.core.nesting import propose_layouts
 from foamforge.core.project import FILE_EXTENSION, Project
 from foamforge.core.validation import (
@@ -39,11 +45,19 @@ from foamforge.export.pdf_exporter import (
     export_png,
 )
 from foamforge.export.svg_exporter import export_svg
+from foamforge.export.xtool_exporter import (
+    XTOOL_P2S,
+    MachineExportError,
+    export_layers_svg,
+    export_xtool_svg,
+)
 from foamforge.ui.alerts_panel import AlertsPanel
 from foamforge.ui.canvas import FoamCanvas
-from foamforge.ui.dialogs import NestingDialog, NewProjectDialog
+from foamforge.ui.dialogs import NestingDialog, ProjectSettingsDialog
+from foamforge.ui.layers_panel import LayersPanel
 from foamforge.ui.property_panel import PropertyPanel
 from foamforge.ui.toolbars import build_tool_toolbar
+from foamforge.ui.view3d import FoamView3D
 
 _PROJECT_FILTER = f"Projet FoamForge (*{FILE_EXTENSION})"
 
@@ -58,9 +72,15 @@ class MainWindow(QMainWindow):
         self._project_path: Path | None = None
         self._dirty = False
 
-        # --- Canvas central -------------------------------------------- #
+        # --- Centre : canvas 2D + vue 3D commutables --------------------- #
+        from PySide6.QtWidgets import QStackedWidget
+
         self.canvas = FoamCanvas(self)
-        self.setCentralWidget(self.canvas)
+        self.view3d = FoamView3D(self)
+        self._center_stack = QStackedWidget(self)
+        self._center_stack.addWidget(self.canvas)
+        self._center_stack.addWidget(self.view3d)
+        self.setCentralWidget(self._center_stack)
 
         # --- Barre d'outils gauche -------------------------------------- #
         self.addToolBar(
@@ -75,6 +95,17 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetFeature.DockWidgetMovable
         )
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_props)
+
+        # --- Panneau couches de mousse (droite, onglet avec propriétés) -- #
+        self.layers_panel = LayersPanel(self)
+        dock_layers = QDockWidget("Couches de mousse", self)
+        dock_layers.setWidget(self.layers_panel)
+        dock_layers.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock_layers)
+        self.tabifyDockWidget(dock_props, dock_layers)
+        dock_props.raise_()
 
         # --- Panneau d'alertes (bas) ------------------------------------- #
         self.alerts_panel = AlertsPanel(self)
@@ -116,7 +147,15 @@ class MainWindow(QMainWindow):
                          QKeySequence.StandardKey.SaveAs,
                          self.save_project_as)
         menu_file.addSeparator()
+        self._add_action(menu_file, "Paramètres du projet…", "Ctrl+,",
+                         self.edit_project_settings)
+        menu_file.addSeparator()
         menu_export = menu_file.addMenu("Exporter")
+        self._add_action(menu_export, "Exporter pour xTool P2S…", "Ctrl+E",
+                         self.export_xtool)
+        self._add_action(menu_export, "Exporter par couche (xTool P2S)…",
+                         None, self.export_per_layer)
+        menu_export.addSeparator()
         self._add_action(menu_export, "SVG (découpe laser)…", None,
                          lambda: self._export("svg"))
         self._add_action(menu_export, "DXF (CNC)…", None,
@@ -136,10 +175,22 @@ class MainWindow(QMainWindow):
                          self.canvas.duplicate_selection)
         self._add_action(menu_edit, "Supprimer", "Backspace",
                          self.canvas.delete_selection)
+        menu_edit.addSeparator()
+        self._add_action(menu_edit, "Fusionner les formes", "Ctrl+M",
+                         self.merge_selection)
+        self._add_action(menu_edit, "Soustraire de la première forme",
+                         "Ctrl+Shift+M", self.subtract_selection)
+        self._add_action(menu_edit, "Intersection des formes", None,
+                         self.intersect_selection)
 
         menu_view = self.menuBar().addMenu("&Affichage")
         self._add_action(menu_view, "Ajuster à la plaque", "Ctrl+0",
                          self.canvas.fit_sheet)
+        self._view3d_action = QAction("Vue 3D", self)
+        self._view3d_action.setCheckable(True)
+        self._view3d_action.setShortcut("Ctrl+3")
+        self._view3d_action.toggled.connect(self._toggle_3d)
+        menu_view.addAction(self._view3d_action)
         menu_view.addSeparator()
         self._expert_action = QAction("Mode expert", self)
         self._expert_action.setCheckable(True)
@@ -166,6 +217,7 @@ class MainWindow(QMainWindow):
         self.canvas.cursor_moved.connect(self._on_cursor_moved)
         self.property_panel.shape_edited.connect(self.canvas.refresh_shape)
         self.alerts_panel.issue_activated.connect(self._select_shapes)
+        self.layers_panel.layers_changed.connect(self._on_model_changed)
 
     # ------------------------------------------------------------------ #
     # Cycle de vie du projet
@@ -173,6 +225,8 @@ class MainWindow(QMainWindow):
     def set_project(self, project: Project, path: Path | None = None) -> None:
         self._project_path = path
         self.canvas.set_project(project)
+        self.view3d.set_project(project)
+        self.layers_panel.set_project(project)
         self.property_panel.set_shape(None)
         self._dirty = False
         self._update_title()
@@ -181,9 +235,23 @@ class MainWindow(QMainWindow):
     def new_project(self) -> None:
         if not self._confirm_discard():
             return
-        dialog = NewProjectDialog(self)
+        dialog = ProjectSettingsDialog(parent=self)
         if dialog.exec():
             self.set_project(dialog.build_project())
+
+    def edit_project_settings(self) -> None:
+        """Modifie les dimensions de valise et réglages après création."""
+        project = self.canvas.project
+        dialog = ProjectSettingsDialog(project=project, parent=self)
+        if not dialog.exec():
+            return
+        dialog.apply_to(project)
+        # Si un empilement existait, il peut ne plus correspondre à la
+        # nouvelle profondeur : la validation le signalera en rouge.
+        self.canvas.rebuild_scene()
+        self.canvas.fit_sheet()
+        self.layers_panel.refresh()
+        self._on_model_changed()
 
     def open_project(self) -> None:
         if not self._confirm_discard():
@@ -263,13 +331,7 @@ class MainWindow(QMainWindow):
 
     def _export(self, kind: str) -> None:
         # Bloque l'export fabrication si la conception comporte une erreur.
-        issues = validate_project(self.canvas.project)
-        if kind in ("svg", "dxf") and worst_severity(issues) is Severity.ERROR:
-            QMessageBox.warning(
-                self, "Export bloqué",
-                "La conception comporte des erreurs bloquantes (alertes "
-                "rouges). Corrigez-les avant d'exporter pour fabrication.",
-            )
+        if kind in ("svg", "dxf") and not self._block_if_errors():
             return
         file_filter, exporter = self._EXPORTERS[kind]
         suggested = f"{self.canvas.project.name}.{kind}"
@@ -286,6 +348,116 @@ class MainWindow(QMainWindow):
             )
             return
         self.statusBar().showMessage(f"Exporté : {filename}", 5000)
+
+    # ------------------------------------------------------------------ #
+    # Formes composées (fusion / soustraction / intersection)
+    # ------------------------------------------------------------------ #
+    def _run_boolean(self, operation: str) -> None:
+        shapes = self.canvas.selected_shapes_ordered()
+        try:
+            if len(shapes) < 2:
+                raise BooleanOperationError(
+                    "Sélectionnez au moins deux formes (pour une "
+                    "soustraction, la première sélectionnée est la base)."
+                )
+            if operation == "merge":
+                compound = merge_shapes(shapes)
+            elif operation == "subtract":
+                compound = subtract_shapes(shapes[0], shapes[1:])
+            else:
+                compound = intersect_shapes(shapes)
+        except BooleanOperationError as exc:
+            QMessageBox.warning(self, "Forme composée", str(exc))
+            return
+
+        answer = QMessageBox.question(
+            self, "Forme composée",
+            "Supprimer les formes sources ?\n\n"
+            "Oui : seule la forme composée reste.\n"
+            "Non : les sources sont conservées (la composée s'ajoute).",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Cancel:
+            return
+        if answer == QMessageBox.StandardButton.Yes:
+            for shape in shapes:
+                self.canvas.project.remove_shape(shape.id)
+            self.canvas.rebuild_scene()
+        self.canvas.add_shape(compound)
+        self.statusBar().showMessage(
+            f"Forme composée « {compound.spec.name} » créée.", 4000
+        )
+
+    def merge_selection(self) -> None:
+        self._run_boolean("merge")
+
+    def subtract_selection(self) -> None:
+        self._run_boolean("subtract")
+
+    def intersect_selection(self) -> None:
+        self._run_boolean("intersect")
+
+    # ------------------------------------------------------------------ #
+    # Vue 3D
+    # ------------------------------------------------------------------ #
+    def _toggle_3d(self, enabled: bool) -> None:
+        self._center_stack.setCurrentWidget(
+            self.view3d if enabled else self.canvas
+        )
+        if enabled:
+            self.view3d.refresh()
+
+    # ------------------------------------------------------------------ #
+    # Exports xTool P2S
+    # ------------------------------------------------------------------ #
+    def export_xtool(self) -> None:
+        """SVG global prêt pour xTool Creative Space."""
+        if not self._block_if_errors():
+            return
+        suggested = f"{self.canvas.project.name}_xtool.svg"
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Exporter pour xTool P2S", suggested, "SVG (*.svg)"
+        )
+        if not filename:
+            return
+        try:
+            export_xtool_svg(self.canvas.project, filename, XTOOL_P2S)
+        except (MachineExportError, OSError) as exc:
+            QMessageBox.critical(self, "Export xTool impossible", str(exc))
+            return
+        self.statusBar().showMessage(f"Exporté pour xTool P2S : {filename}", 5000)
+
+    def export_per_layer(self) -> None:
+        """Un SVG par couche de mousse (empilement requis)."""
+        if not self._block_if_errors():
+            return
+        directory = QFileDialog.getExistingDirectory(
+            self, "Dossier d'export des couches"
+        )
+        if not directory:
+            return
+        try:
+            files = export_layers_svg(self.canvas.project, directory, XTOOL_P2S)
+        except (MachineExportError, OSError) as exc:
+            QMessageBox.critical(self, "Export par couche impossible", str(exc))
+            return
+        self.statusBar().showMessage(
+            f"{len(files)} couche(s) exportée(s) dans {directory}", 5000
+        )
+
+    def _block_if_errors(self) -> bool:
+        """Refuse les exports fabrication si la validation est rouge."""
+        issues = validate_project(self.canvas.project)
+        if worst_severity(issues) is Severity.ERROR:
+            QMessageBox.warning(
+                self, "Export bloqué",
+                "La conception comporte des erreurs bloquantes (alertes "
+                "rouges). Corrigez-les avant d'exporter pour fabrication.",
+            )
+            return False
+        return True
 
     # ------------------------------------------------------------------ #
     # Nesting
@@ -343,6 +515,8 @@ class MainWindow(QMainWindow):
         # Le déplacement à la souris doit se refléter dans le panneau,
         # sinon la prochaine édition réappliquerait l'ancienne position.
         self.property_panel.sync_position()
+        # La vue 3D suit toutes les modifications (repaint léger).
+        self.view3d.refresh()
         self._validation_timer.start()
 
     def _on_selection_changed(self, shapes: list) -> None:

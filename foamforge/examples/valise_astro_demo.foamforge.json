@@ -1,27 +1,49 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "Valise astro — démo",
   "case": {
-    "width_mm": 460,
-    "height_mm": 360,
-    "depth_mm": 180
+    "name": "Nanuk 935",
+    "internal_width_mm": 560,
+    "internal_height_mm": 300,
+    "internal_depth_mm": 120
   },
   "sheet": {
-    "width_mm": 440,
-    "height_mm": 340,
-    "thickness_mm": 60
+    "width_mm": 560,
+    "height_mm": 300,
+    "thickness_mm": 80.0
   },
-  "layer_count": 1,
+  "layer_count": 3,
   "foam_type": "Plastazote",
   "foam_color": "#1a1a1a",
   "background_color": "#b3261e",
+  "available_foam_thicknesses_mm": [
+    10,
+    20,
+    30,
+    40
+  ],
+  "foam_layers": [
+    {
+      "thickness_mm": 40.0,
+      "role": "bottom"
+    },
+    {
+      "thickness_mm": 40.0,
+      "role": "cutout"
+    },
+    {
+      "thickness_mm": 40.0,
+      "role": "cutout"
+    }
+  ],
+  "min_bottom_floor_mm": 10,
   "min_spacing_mm": 8.0,
   "min_border_mm": 12.0,
   "grid_step_mm": 1.0,
   "notes": "Vérifier la dessicant-box avant chaque sortie.",
   "shapes": [
     {
-      "id": "7ac2fadb892b",
+      "id": "4fa0f77bf355",
       "kind": "rect",
       "x_mm": 90,
       "y_mm": 95,
@@ -34,7 +56,9 @@
         "cut_type": "pocket",
         "cut_order": 1,
         "comment": "Connectique vers le haut",
-        "weight_g": 700
+        "weight_g": 700,
+        "object_height_mm": 78,
+        "creation_source": "manual"
       },
       "geometry": {
         "width_mm": 90,
@@ -42,7 +66,7 @@
       }
     },
     {
-      "id": "fdb5183eca64",
+      "id": "a28909c85ee2",
       "kind": "circle",
       "x_mm": 240,
       "y_mm": 95,
@@ -55,14 +79,16 @@
         "cut_type": "pocket",
         "cut_order": 2,
         "comment": "",
-        "weight_g": 550
+        "weight_g": 550,
+        "object_height_mm": 35,
+        "creation_source": "manual"
       },
       "geometry": {
         "diameter_mm": 110
       }
     },
     {
-      "id": "3dca3991d0e3",
+      "id": "691d668b4dd5",
       "kind": "rect",
       "x_mm": 370,
       "y_mm": 110,
@@ -75,7 +101,9 @@
         "cut_type": "pocket",
         "cut_order": 3,
         "comment": "",
-        "weight_g": 350
+        "weight_g": 350,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "width_mm": 70,
@@ -83,10 +111,10 @@
       }
     },
     {
-      "id": "a95c8a00a314",
+      "id": "498396e0aab1",
       "kind": "circle",
       "x_mm": 70,
-      "y_mm": 250,
+      "y_mm": 240,
       "rotation_deg": 0.0,
       "spec": {
         "name": "Oculaire 1",
@@ -96,17 +124,19 @@
         "cut_type": "pocket",
         "cut_order": 4,
         "comment": "",
-        "weight_g": 200
+        "weight_g": 200,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "diameter_mm": 45
       }
     },
     {
-      "id": "45a499acad17",
+      "id": "483285836411",
       "kind": "circle",
       "x_mm": 150,
-      "y_mm": 250,
+      "y_mm": 240,
       "rotation_deg": 0.0,
       "spec": {
         "name": "Oculaire 2",
@@ -116,17 +146,19 @@
         "cut_type": "pocket",
         "cut_order": 5,
         "comment": "",
-        "weight_g": 200
+        "weight_g": 200,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "diameter_mm": 45
       }
     },
     {
-      "id": "b3db8755e6b0",
+      "id": "51b863e8e3d5",
       "kind": "circle",
       "x_mm": 230,
-      "y_mm": 250,
+      "y_mm": 240,
       "rotation_deg": 0.0,
       "spec": {
         "name": "Oculaire 3",
@@ -136,14 +168,16 @@
         "cut_type": "pocket",
         "cut_order": 6,
         "comment": "",
-        "weight_g": 200
+        "weight_g": 200,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "diameter_mm": 45
       }
     },
     {
-      "id": "ea9b7d903a5f",
+      "id": "ff6b54e11718",
       "kind": "rect",
       "x_mm": 360,
       "y_mm": 255,
@@ -156,7 +190,9 @@
         "cut_type": "pocket",
         "cut_order": 7,
         "comment": "",
-        "weight_g": 250
+        "weight_g": 250,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "width_mm": 80,
@@ -164,10 +200,10 @@
       }
     },
     {
-      "id": "67d7b5d9e887",
+      "id": "b159f32e6d80",
       "kind": "text",
-      "x_mm": 222,
-      "y_mm": 320,
+      "x_mm": 470,
+      "y_mm": 265,
       "rotation_deg": 0.0,
       "spec": {
         "name": "Étiquette",
@@ -177,7 +213,9 @@
         "cut_type": "engrave",
         "cut_order": 8,
         "comment": "",
-        "weight_g": 0.0
+        "weight_g": 0.0,
+        "object_height_mm": 0.0,
+        "creation_source": "manual"
       },
       "geometry": {
         "text": "ASTRO KIT",

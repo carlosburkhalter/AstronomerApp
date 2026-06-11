@@ -5,4 +5,4 @@ découpes de mousse destinées au laser / CNC. Toutes les unités internes
 sont en millimètres.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

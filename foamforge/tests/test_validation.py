@@ -96,6 +96,73 @@ def test_pocket_deeper_than_sheet_is_blocking() -> None:
                and i.severity is Severity.ERROR for i in issues)
 
 
+def test_object_taller_than_case_is_blocking() -> None:
+    project = _project(case_depth_mm=100.0)
+    project.add_shape(RectShape(
+        width_mm=80, height_mm=60, x_mm=150, y_mm=150,
+        spec=CutoutSpec(depth_mm=40, object_height_mm=120),
+    ))
+    issues = validate_project(project)
+    assert any(i.code == "object_taller_than_case"
+               and i.severity is Severity.ERROR for i in issues)
+
+
+def test_shallow_pocket_for_tall_object_warns() -> None:
+    """Objet de 80 mm dans une poche de 35 mm : maintien partiel signalé."""
+    project = _project(case_depth_mm=160.0)
+    project.add_shape(RectShape(
+        width_mm=80, height_mm=60, x_mm=150, y_mm=150,
+        spec=CutoutSpec(depth_mm=35, object_height_mm=80),
+    ))
+    issues = validate_project(project)
+    assert any(i.code == "pocket_shallow_for_object"
+               and i.severity is Severity.WARNING for i in issues)
+
+
+def test_full_pocket_for_object_is_fine() -> None:
+    """Objet de 30 mm dans une poche de 30 mm : aucun avertissement."""
+    project = _project(case_depth_mm=160.0)
+    project.add_shape(RectShape(
+        width_mm=80, height_mm=60, x_mm=150, y_mm=150,
+        spec=CutoutSpec(depth_mm=30, object_height_mm=30),
+    ))
+    issues = validate_project(project)
+    assert not any(i.code == "pocket_shallow_for_object" for i in issues)
+    assert not any(i.code == "object_taller_than_case" for i in issues)
+
+
+def test_layer_stack_mismatch_is_blocking() -> None:
+    """Empilement ne remplissant pas la profondeur intérieure → erreur."""
+    from foamforge.core.layers import FoamLayer, LayerRole
+
+    project = _project(case_depth_mm=120.0)
+    project.foam_layers = [
+        FoamLayer(20.0, LayerRole.BOTTOM),
+        FoamLayer(40.0, LayerRole.CUTOUT),
+    ]  # total 60 ≠ 120
+    issues = validate_project(project)
+    assert any(i.code == "layers_mismatch_depth"
+               and i.severity is Severity.ERROR for i in issues)
+
+
+def test_pocket_depth_vs_cuttable_layers() -> None:
+    """Avec un empilement : la profondeur découpable = couches CUTOUT."""
+    from foamforge.core.layers import FoamLayer, LayerRole
+
+    project = _project(case_depth_mm=120.0)
+    project.foam_layers = [
+        FoamLayer(40.0, LayerRole.BOTTOM),
+        FoamLayer(40.0, LayerRole.CUTOUT),
+        FoamLayer(40.0, LayerRole.LID),
+    ]
+    project.add_shape(RectShape(
+        width_mm=80, height_mm=60, x_mm=150, y_mm=150,
+        spec=CutoutSpec(depth_mm=60),  # > 40 mm découpables
+    ))
+    issues = validate_project(project)
+    assert any(i.code == "depth_exceeds_thickness" for i in issues)
+
+
 def test_unbalanced_weight_warns() -> None:
     project = _project()
     # Tout le poids dans le coin haut-gauche.

@@ -258,41 +258,56 @@ class EllipseShape(Shape):
 
 @dataclass
 class PolygonShape(Shape):
-    """Polygone libre : formes dessinées ou contours issus d'une photo.
+    """Polygone libre : forme dessinée, contour photo ou forme composée.
 
     ``points_mm`` est la liste des sommets locaux, centrés sur l'origine.
+    ``holes_mm`` contient les anneaux intérieurs (trous), par exemple après
+    soustraction d'un cercle dans un rectangle (encoche fermée).
     """
 
     points_mm: list[tuple[float, float]] = field(default_factory=list)
+    holes_mm: list[list[tuple[float, float]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.kind = ShapeKind.POLYGON
 
     @classmethod
     def from_polygon(cls, polygon: Polygon, **kwargs: Any) -> "PolygonShape":
-        """Crée la forme depuis un polygone Shapely (ex. détection photo).
+        """Crée la forme depuis un polygone Shapely (photo, fusion...).
 
         Le polygone est recentré sur son centroïde ; la position de la
-        forme reprend le centroïde d'origine.
+        forme reprend le centroïde d'origine. Les trous sont conservés.
         """
         cx, cy = polygon.centroid.x, polygon.centroid.y
         pts = [(x - cx, y - cy) for x, y in polygon.exterior.coords[:-1]]
+        holes = [
+            [(x - cx, y - cy) for x, y in ring.coords[:-1]]
+            for ring in polygon.interiors
+        ]
         kwargs.setdefault("x_mm", cx)
         kwargs.setdefault("y_mm", cy)
-        return cls(points_mm=pts, **kwargs)
+        return cls(points_mm=pts, holes_mm=holes, **kwargs)
 
     def base_polygon(self) -> Polygon:
         if len(self.points_mm) < 3:
             # Polygone dégénéré : on retourne un point bufferisé minuscule
             # pour ne jamais casser la validation ni l'export.
             return Point(0, 0).buffer(0.5)
-        poly = Polygon(self.points_mm)
+        poly = Polygon(
+            self.points_mm,
+            [hole for hole in self.holes_mm if len(hole) >= 3],
+        )
         if not poly.is_valid:
             poly = poly.buffer(0)  # répare les auto-intersections
+            if poly.geom_type == "MultiPolygon":
+                poly = max(poly.geoms, key=lambda g: g.area)
         return poly
 
     def _geometry_dict(self) -> dict[str, Any]:
-        return {"points_mm": [list(p) for p in self.points_mm]}
+        return {
+            "points_mm": [list(p) for p in self.points_mm],
+            "holes_mm": [[list(p) for p in hole] for hole in self.holes_mm],
+        }
 
 
 # Largeur approximative d'un caractère par rapport à sa hauteur, pour
@@ -343,6 +358,9 @@ def shape_from_dict(data: dict[str, Any]) -> Shape:
     geometry = dict(data.get("geometry", {}))
     if kind is ShapeKind.POLYGON:
         geometry["points_mm"] = [tuple(p) for p in geometry.get("points_mm", [])]
+        geometry["holes_mm"] = [
+            [tuple(p) for p in hole] for hole in geometry.get("holes_mm", [])
+        ]
     cls = _SHAPE_CLASSES[kind]
     shape = cls(
         x_mm=float(data.get("x_mm", 0.0)),

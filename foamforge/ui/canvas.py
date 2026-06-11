@@ -206,6 +206,9 @@ class FoamCanvas(QGraphicsView):
         self._draw_origin: QPointF | None = None
         self._panning = False
         self._pan_anchor = QPointF()
+        # Ordre chronologique de sélection (ids) : nécessaire aux opérations
+        # booléennes où l'ordre compte (base de soustraction = 1re forme).
+        self._selection_order: list[str] = []
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
@@ -454,5 +457,20 @@ class FoamCanvas(QGraphicsView):
         self.add_shape(shape)
 
     # ------------------------------------------------------------------ #
+    def selected_shapes_ordered(self) -> list[Shape]:
+        """Formes sélectionnées, dans l'ordre chronologique de sélection."""
+        by_id = {s.id: s for s in self.selected_shapes()}
+        ordered = [by_id[i] for i in self._selection_order if i in by_id]
+        # Sécurité : formes sélectionnées hors suivi (rubber band massif).
+        ordered += [s for s in by_id.values() if s not in ordered]
+        return ordered
+
     def _on_selection_changed(self) -> None:
+        selected_ids = {s.id for s in self.selected_shapes()}
+        self._selection_order = [
+            i for i in self._selection_order if i in selected_ids
+        ]
+        for shape_id in selected_ids:
+            if shape_id not in self._selection_order:
+                self._selection_order.append(shape_id)
         self.selection_changed.emit(self.selected_shapes())

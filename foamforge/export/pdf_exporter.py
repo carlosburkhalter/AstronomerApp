@@ -120,8 +120,8 @@ def export_pdf(project: Project, path: str | Path) -> Path:
     preview = render_preview(project)
     width, height = preview.size
 
-    # Cartouche au-dessus du rendu.
-    header_height = 220
+    # Cartouche au-dessus du rendu (4 lignes + empilement éventuel).
+    header_height = 260
     page = Image.new("RGB", (width, height + header_height), "#ffffff")
     draw = ImageDraw.Draw(page)
     title_font = _font(36)
@@ -131,11 +131,20 @@ def export_pdf(project: Project, path: str | Path) -> Path:
     lines = [
         f"Date : {date.today().isoformat()}",
         f"Plaque : {sheet.width_mm:.0f} × {sheet.height_mm:.0f} × "
-        f"{sheet.thickness_mm:.0f} mm — {project.foam_type} — "
-        f"{project.layer_count} couche(s)",
+        f"{sheet.thickness_mm:.0f} mm — {project.foam_type}",
         f"Logements : {len(project.checklist_items())} — "
         f"Objets : {', '.join(project.checklist_items()) or 'aucun'}",
     ]
+    if project.foam_layers:
+        stack = " + ".join(
+            f"{layer.thickness_mm:.0f} ({layer.role.label})"
+            for layer in project.foam_layers
+        )
+        total = sum(layer.thickness_mm for layer in project.foam_layers)
+        lines.append(
+            f"Empilement (fond → haut) : {stack} = {total:.0f} mm "
+            f"pour {project.case_depth_mm:.0f} mm intérieurs"
+        )
     y = 84
     for line in lines:
         draw.text((40, y), line, fill="#333333", font=body_font)

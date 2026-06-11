@@ -91,6 +91,8 @@ foamforge/
 │   ├── project.py       Modèle de projet + persistance JSON versionnée
 │   ├── geometry.py      Formes, marges, arrondis (Shapely)
 │   ├── validation.py    Contrôles de sécurité (rouge/orange/vert)
+│   ├── layers.py        FoamLayerPlanner : empilement de couches
+│   ├── booleans.py      Formes composées (fusion/soustraction/intersection)
 │   ├── nesting.py       Placement automatique (glouton bottom-left)
 │   └── units.py         Unités mm, snapping, précision d'export
 ├── ui/                  Composants PySide6
@@ -98,13 +100,16 @@ foamforge/
 │   ├── toolbars.py      Barre d'outils de dessin
 │   ├── property_panel.py Panneau de propriétés (modes débutant/expert)
 │   ├── alerts_panel.py  Panneau d'alertes de validation
-│   └── dialogs.py       Nouveau projet, choix de nesting
+│   ├── layers_panel.py  Panneau « Couches de mousse »
+│   ├── view3d.py        Vue 3D isométrique (QPainter)
+│   └── dialogs.py       Paramètres du projet, choix de nesting
 ├── vision/              Import photo (OpenCV)
 │   ├── image_import.py  Session d'import (orchestration)
 │   ├── calibration.py   Échelle par feuille A4 ou règle
 │   └── contour_detection.py  Détection/nettoyage/vectorisation
 ├── export/              Fabrication (calques CUT_FULL, CUT_POCKET, …)
-│   ├── svg_exporter.py  SVG mm pour laser
+│   ├── svg_exporter.py  SVG mm pour laser (cœur partagé)
+│   ├── xtool_exporter.py Profil xTool P2S, kerf, export par couche
 │   ├── dxf_exporter.py  DXF R2010 mm pour CNC (ezdxf)
 │   └── pdf_exporter.py  PDF de contrôle, PNG, checklist HTML
 ├── database/            Bibliothèque d'objets (SQLite)
@@ -138,41 +143,57 @@ Le DXF est exporté en repère machine (axe Y vers le haut, `$INSUNITS=4`).
 
 ---
 
-## État du MVP
+## État actuel (v0.2)
 
-Fonctionnel dès maintenant :
+Tout le MVP v0.1, plus :
 
-- création de projet (valise, plaque, épaisseur, couches, type, couleurs) ;
-- canvas 2D : grille mm, zoom, pan, sélection, magnétisme, dimensions réelles ;
-- rectangle, cercle, ellipse, texte gravé ; déplacement, duplication,
-  suppression ; rotation et redimensionnement par le panneau de propriétés ;
-- paramètres de découpe complets par logement (profondeur, marge, arrondi,
-  type, ordre, commentaire, poids) ;
-- validation continue : chevauchements, parois fines, bords, profondeurs,
-  répartition du poids — avec blocage des exports fabrication en erreur ;
-- placement automatique (3 stratégies) ;
-- sauvegarde/ouverture JSON ; exports SVG, DXF, PDF, PNG, checklist HTML ;
-- bibliothèque d'objets SQLite (API complète + import/export) ;
-- import photo (calibration A4/règle + détection de contours, API testée).
+- **dimensions intérieures de valise** : modèle/nom, largeur × hauteur ×
+  profondeur intérieures, marge de sécurité ; le canvas représente la
+  surface intérieure utile ; modifiables après création
+  (*Projet → Paramètres du projet…*) ;
+- **couches de mousse calculées** (FoamLayerPlanner) : à partir des
+  épaisseurs disponibles, de la poche la plus profonde, de l'objet le
+  plus haut et du fond minimal, propose un empilement qui remplit
+  exactement la profondeur intérieure (rôles fond / découpée /
+  compensation / couvercle), avec erreurs claires si impossible ;
+- **hauteur réelle des objets** distincte de la profondeur de poche,
+  avec contrôles : objet plus haut que la valise (erreur), maintien
+  partiel < 50 % (avertissement), poche > mousse découpable (erreur) ;
+- **formes composées** : fusionner / soustraire / intersecter des formes
+  chevauchées (Édition → Fusionner, Ctrl+M) — deux rectangles deviennent
+  un L, un cercle soustrait crée une encoche ; les trous sont conservés,
+  les marges restent applicables, l'export produit une géométrie propre ;
+- **vue 3D isométrique** (Ctrl+3) : empilement des couches, poches en
+  creux avec profondeurs, découpes traversantes sur fond coloré ;
+- **export xTool P2S** : SVG « machine-ready » pour xTool Creative Space
+  (mm exacts, chemins fermés, calques nommés, kerf optionnel, contrôle
+  de la surface utile 600 × 308 mm) ;
+- **export par couche** : un SVG par couche de mousse
+  (`…_LAYER_01_BOTTOM.svg`, `…_LAYER_02_CUTOUT.svg`…) — une poche de
+  60 mm sur deux couches de 40 traverse la première et entame la
+  seconde de 20 mm ; le PDF de contrôle résume l'empilement ;
+- **schéma de fichier v2** avec migration automatique des projets v1.
+
+Toujours fonctionnel depuis le MVP : canvas 2D complet, paramètres de
+découpe par logement, validation continue rouge/orange/vert, nesting,
+exports SVG/DXF/PDF/PNG/checklist, bibliothèque SQLite (API), import
+photo OpenCV (API).
 
 ## Feuille de route vers une version commerciale
 
-**v0.2 — Confort d'édition**
+**v0.3 — Confort d'édition + bibliothèque dans l'UI**
 - annuler/rétablir (pile de commandes), groupes d'objets,
   poignées de redimensionnement/rotation sur le canvas,
   alignement automatique et guides magnétiques,
   outil polygone/forme libre au canvas.
-
-**v0.3 — Bibliothèque et photo dans l'UI**
 - panneau bibliothèque (recherche, glisser-déposer vers le canvas),
   assistant d'import photo en 3 étapes avec prévisualisation et
   ajustement interactif des contours,
   catalogue d'objets fournis (caméras ZWO/QHY, oculaires courants…).
 
-**v0.4 — Multi-couches et fabrication avancée**
-- gestion des couches de mousse (une découpe par couche, vue par couche),
-  export par couche, ordre/sens de découpe optimisé,
-  compensation du trait de coupe (kerf), ponts/attaches optionnels.
+**v0.4 — Fabrication avancée**
+- vue par couche dans le canvas 2D, ordre/sens de découpe optimisé,
+  presets matériaux par machine, ponts/attaches optionnels.
 
 **v0.5 — Nesting et checklist pro**
 - nesting avec rotations et métaheuristique (recuit simulé),

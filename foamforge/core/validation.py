@@ -65,6 +65,8 @@ def validate_project(project: Project) -> list[Issue]:
     texts = [s for s in project.shapes if s.kind is ShapeKind.TEXT]
 
     issues += _check_depths(project)
+    issues += _check_object_heights(project)
+    issues += _check_layer_plan(project)
     issues += _check_inside_sheet(foam, cuts + texts)
     issues += _check_border_distance(project, foam, cuts)
     issues += _check_pairwise_distance(project, cuts)
@@ -85,33 +87,97 @@ def validate_project(project: Project) -> list[Issue]:
 # Contrôles individuels
 # ---------------------------------------------------------------------- #
 def _check_depths(project: Project) -> list[Issue]:
-    """Profondeur de poche cohérente avec l'épaisseur de la plaque."""
+    """Profondeurs de poche cohérentes avec la mousse découpable."""
     issues: list[Issue] = []
-    thickness = project.sheet.thickness_mm
+    # Avec un empilement de couches : somme des couches découpées ;
+    # sinon : épaisseur de la plaque unique.
+    cuttable = project.cuttable_depth_mm()
     for shape in project.shapes:
         spec = shape.spec
-        if spec.cut_type == CutType.POCKET and spec.depth_mm > thickness:
+        if spec.cut_type == CutType.POCKET and spec.depth_mm > cuttable:
             issues.append(
                 Issue(
                     Severity.ERROR,
                     "depth_exceeds_thickness",
                     f"{_label(shape)} : profondeur de poche "
-                    f"{spec.depth_mm:.1f} mm > épaisseur de mousse "
-                    f"{thickness:.1f} mm.",
+                    f"{spec.depth_mm:.1f} mm > mousse découpable "
+                    f"{cuttable:.1f} mm.",
                     [shape.id],
                 )
             )
-        elif spec.cut_type == CutType.POCKET and spec.depth_mm > thickness - 5:
+        elif spec.cut_type == CutType.POCKET and spec.depth_mm > cuttable - 5:
             issues.append(
                 Issue(
                     Severity.WARNING,
                     "thin_floor",
                     f"{_label(shape)} : fond de poche < 5 mm "
-                    f"({thickness - spec.depth_mm:.1f} mm restant), "
+                    f"({cuttable - spec.depth_mm:.1f} mm restant), "
                     "zone fragile sous l'objet.",
                     [shape.id],
                 )
             )
+    return issues
+
+
+def _check_object_heights(project: Project) -> list[Issue]:
+    """Hauteur réelle des objets vs profondeur intérieure de la valise.
+
+    La hauteur de l'objet n'est PAS la profondeur de poche : un objet de
+    80 mm peut être maintenu par une poche de 35 mm. On contrôle donc :
+    objet plus haut que la valise (erreur) et poche trop faible pour un
+    maintien correct (avertissement).
+    """
+    issues: list[Issue] = []
+    case_depth = project.case_depth_mm
+    for shape in project.shapes:
+        spec = shape.spec
+        height = spec.object_height_mm
+        if height <= 0:
+            continue  # hauteur non mesurée : rien à contrôler
+        if height > case_depth:
+            issues.append(
+                Issue(
+                    Severity.ERROR,
+                    "object_taller_than_case",
+                    f"{_label(shape)} : objet de {height:.0f} mm pour une "
+                    f"valise de {case_depth:.0f} mm de profondeur "
+                    "intérieure — la valise ne fermera pas.",
+                    [shape.id],
+                )
+            )
+        elif (
+            spec.cut_type == CutType.POCKET
+            and spec.depth_mm < height * 0.5
+        ):
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "pocket_shallow_for_object",
+                    f"{_label(shape)} : poche de {spec.depth_mm:.0f} mm pour "
+                    f"un objet de {height:.0f} mm (< 50 % de maintien) — "
+                    "l'objet risque de bouger.",
+                    [shape.id],
+                )
+            )
+    return issues
+
+
+def _check_layer_plan(project: Project) -> list[Issue]:
+    """Cohérence de l'empilement de couches s'il est défini."""
+    if not project.foam_layers:
+        return []
+    issues: list[Issue] = []
+    total = sum(layer.thickness_mm for layer in project.foam_layers)
+    if abs(total - project.case_depth_mm) > 0.05:
+        issues.append(
+            Issue(
+                Severity.ERROR,
+                "layers_mismatch_depth",
+                f"L'empilement de couches totalise {total:.1f} mm pour une "
+                f"profondeur intérieure de {project.case_depth_mm:.1f} mm : "
+                "recalculez les couches.",
+            )
+        )
     return issues
 
 
