@@ -36,6 +36,9 @@ def _mm_spin(minimum: float, maximum: float, step: float = 1.0) -> QDoubleSpinBo
     spin.setSingleStep(step)
     spin.setDecimals(1)
     spin.setSuffix(" mm")
+    # Sans cela, taper « 150 » appliquerait 1, puis 15, puis 150 au modèle
+    # (valueChanged émis à chaque frappe).
+    spin.setKeyboardTracking(False)
     return spin
 
 
@@ -79,6 +82,7 @@ class PropertyPanel(QWidget):
         self.rotation_spin = QDoubleSpinBox()
         self.rotation_spin.setRange(-360, 360)
         self.rotation_spin.setSuffix(" °")
+        self.rotation_spin.setKeyboardTracking(False)
         self._add_row("Rotation", self.rotation_spin, expert=True)
 
         # --- Texte gravé ------------------------------------------------ #
@@ -103,9 +107,17 @@ class PropertyPanel(QWidget):
         self._add_row("Rayon d'arrondi", self.radius_spin, expert=True)
         self.order_spin = QSpinBox()
         self.order_spin.setRange(1, 999)
+        self.order_spin.setKeyboardTracking(False)
         self._add_row("Ordre de découpe", self.order_spin, expert=True)
+        self.height_obj_spin = _mm_spin(0, 1000)
+        self.height_obj_spin.setToolTip(
+            "Hauteur réelle mesurée de l'objet (≠ profondeur de poche) : "
+            "sert aux contrôles par rapport à la profondeur de la valise."
+        )
+        self._add_row("Hauteur de l'objet", self.height_obj_spin)
         self.weight_spin = QDoubleSpinBox()
         self.weight_spin.setRange(0, 100000)
+        self.weight_spin.setKeyboardTracking(False)
         self.weight_spin.setSuffix(" g")
         self.weight_spin.setToolTip(
             "Poids de l'objet : permet le contrôle de répartition du poids"
@@ -135,7 +147,7 @@ class PropertyPanel(QWidget):
             self.x_spin, self.y_spin, self.width_spin, self.height_spin,
             self.diameter_spin, self.rotation_spin, self.font_height_spin,
             self.depth_spin, self.margin_spin, self.radius_spin,
-            self.weight_spin,
+            self.height_obj_spin, self.weight_spin,
         ):
             spin.valueChanged.connect(self._apply)
         self.order_spin.valueChanged.connect(self._apply)
@@ -179,9 +191,27 @@ class PropertyPanel(QWidget):
                 self.margin_spin.setValue(spec.margin_mm)
                 self.radius_spin.setValue(spec.corner_radius_mm)
                 self.order_spin.setValue(max(spec.cut_order, 1))
+                self.height_obj_spin.setValue(spec.object_height_mm)
                 self.weight_spin.setValue(spec.weight_g)
                 self.comment_edit.setText(spec.comment)
             self._refresh_visibility()
+        finally:
+            self._updating = False
+
+    def sync_position(self) -> None:
+        """Resynchronise position/rotation depuis le modèle.
+
+        Appelé après un déplacement à la souris : sans cela, une édition
+        ultérieure dans le panneau réappliquerait les coordonnées périmées
+        mémorisées au moment de la sélection (l'objet « sauterait »).
+        """
+        if self._shape is None or self._updating:
+            return
+        self._updating = True
+        try:
+            self.x_spin.setValue(self._shape.x_mm)
+            self.y_spin.setValue(self._shape.y_mm)
+            self.rotation_spin.setValue(self._shape.rotation_deg)
         finally:
             self._updating = False
 
@@ -207,6 +237,7 @@ class PropertyPanel(QWidget):
             self.depth_spin: has_shape,
             self.margin_spin: has_shape and not is_text,
             self.radius_spin: has_shape and not is_text,
+            self.height_obj_spin: has_shape and not is_text,
             self.order_spin: has_shape,
             self.weight_spin: has_shape and not is_text,
             self.comment_edit: has_shape,
@@ -242,10 +273,13 @@ class PropertyPanel(QWidget):
             shape.font_height_mm = self.font_height_spin.value()
         spec = shape.spec
         if not isinstance(shape, TextShape):
-            spec.cut_type = self.cut_type_combo.currentData()
+            # currentData() peut revenir en str pur (conversion QVariant des
+            # enums str) : on reconstruit toujours l'enum CutType.
+            spec.cut_type = CutType(self.cut_type_combo.currentData())
             spec.margin_mm = self.margin_spin.value()
             spec.corner_radius_mm = self.radius_spin.value()
             spec.weight_g = self.weight_spin.value()
+            spec.object_height_mm = self.height_obj_spin.value()
         spec.depth_mm = self.depth_spin.value()
         spec.cut_order = self.order_spin.value()
         spec.comment = self.comment_edit.text()

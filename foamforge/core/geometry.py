@@ -65,6 +65,16 @@ class CutoutSpec:
     cut_order: int = 0
     comment: str = ""
     weight_g: float = 0.0           # 0 = poids inconnu
+    # Hauteur réelle mesurée de l'objet (≠ profondeur de poche !).
+    # 0 = inconnue. Sert aux contrôles hauteur/valise et au plan de couches.
+    object_height_mm: float = 0.0
+    # Traçabilité : "manual", "library", "photo", "compound".
+    creation_source: str = "manual"
+
+    def __post_init__(self) -> None:
+        # Auto-réparation : Qt (QVariant) et le JSON peuvent transformer
+        # l'enum str CutType en chaîne pure ; on renormalise toujours.
+        self.cut_type = CutType(self.cut_type)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +86,8 @@ class CutoutSpec:
             "cut_order": self.cut_order,
             "comment": self.comment,
             "weight_g": self.weight_g,
+            "object_height_mm": self.object_height_mm,
+            "creation_source": self.creation_source,
         }
 
     @classmethod
@@ -89,6 +101,8 @@ class CutoutSpec:
             cut_order=int(data.get("cut_order", 0)),
             comment=data.get("comment", ""),
             weight_g=float(data.get("weight_g", 0.0)),
+            object_height_mm=float(data.get("object_height_mm", 0.0)),
+            creation_source=data.get("creation_source", "manual"),
         )
 
 

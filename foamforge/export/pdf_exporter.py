@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from foamforge.core.geometry import ShapeKind, TextShape
+from foamforge.core.geometry import CutType, ShapeKind, TextShape
 from foamforge.core.project import Project
 from foamforge.core.units import mm_to_px
 from foamforge.export import LAYER_COLORS, LAYER_CUT_FULL, LAYER_CUT_POCKET
@@ -64,14 +64,14 @@ def render_preview(
         points = [to_px(x, y) for x, y in polygon.exterior.coords]
         outline = (
             LAYER_COLORS[LAYER_CUT_FULL]
-            if shape.spec.cut_type.value == "full"
+            if shape.spec.cut_type == CutType.FULL
             else LAYER_COLORS[LAYER_CUT_POCKET]
         )
         # Une découpe laisse voir le fond de la valise (découpe complète)
         # ou un fond de poche plus sombre que la surface.
         fill = (
             project.background_color
-            if shape.spec.cut_type.value == "full"
+            if shape.spec.cut_type == CutType.FULL
             else _lighten(project.foam_color, 0.25)
         )
         draw.polygon(points, fill=fill, outline=outline)

@@ -32,6 +32,7 @@ from shapely.geometry import Polygon
 from foamforge.core.geometry import (
     CircleShape,
     CutoutSpec,
+    CutType,
     EllipseShape,
     RectShape,
     Shape,
@@ -129,9 +130,10 @@ class ShapeItem(QGraphicsItem):
         is_text = shape.kind is ShapeKind.TEXT
 
         # Remplissage : fond de valise visible pour découpe complète,
-        # mousse éclaircie pour une poche.
+        # mousse éclaircie pour une poche. Comparaison par égalité (et non
+        # .value / is) : tolère un cut_type revenu en str pur via Qt.
         project = self._canvas.project
-        if shape.spec.cut_type.value == "full":
+        if shape.spec.cut_type == CutType.FULL:
             fill = QColor(project.background_color)
         else:
             fill = QColor(project.foam_color).lighter(180)

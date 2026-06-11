@@ -90,7 +90,7 @@ def _check_depths(project: Project) -> list[Issue]:
     thickness = project.sheet.thickness_mm
     for shape in project.shapes:
         spec = shape.spec
-        if spec.cut_type is CutType.POCKET and spec.depth_mm > thickness:
+        if spec.cut_type == CutType.POCKET and spec.depth_mm > thickness:
             issues.append(
                 Issue(
                     Severity.ERROR,
@@ -101,7 +101,7 @@ def _check_depths(project: Project) -> list[Issue]:
                     [shape.id],
                 )
             )
-        elif spec.cut_type is CutType.POCKET and spec.depth_mm > thickness - 5:
+        elif spec.cut_type == CutType.POCKET and spec.depth_mm > thickness - 5:
             issues.append(
                 Issue(
                     Severity.WARNING,

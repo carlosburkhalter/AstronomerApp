@@ -340,6 +340,9 @@ class MainWindow(QMainWindow):
     def _on_model_changed(self) -> None:
         self._dirty = True
         self._update_title()
+        # Le déplacement à la souris doit se refléter dans le panneau,
+        # sinon la prochaine édition réappliquerait l'ancienne position.
+        self.property_panel.sync_position()
         self._validation_timer.start()
 
     def _on_selection_changed(self, shapes: list) -> None:
