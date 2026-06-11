@@ -172,3 +172,24 @@ def test_unbalanced_weight_warns() -> None:
     ))
     issues = validate_project(project)
     assert any(i.code == "weight_unbalanced" for i in issues)
+
+
+def test_corner_radius_too_large_warns() -> None:
+    project = _project()
+    project.add_shape(RectShape(
+        width_mm=20, height_mm=10, x_mm=150, y_mm=150,
+        spec=CutoutSpec(margin_mm=0, corner_radius_mm=12),
+    ))
+    issues = validate_project(project)
+    assert any(i.code == "corner_radius_too_large"
+               and i.severity is Severity.WARNING for i in issues)
+
+
+def test_applicable_radius_does_not_warn() -> None:
+    project = _project()
+    project.add_shape(RectShape(
+        width_mm=80, height_mm=60, x_mm=150, y_mm=150,
+        spec=CutoutSpec(margin_mm=1, corner_radius_mm=8),
+    ))
+    issues = validate_project(project)
+    assert not any(i.code == "corner_radius_too_large" for i in issues)

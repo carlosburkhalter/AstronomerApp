@@ -101,7 +101,8 @@ foamforge/
 │   ├── property_panel.py Panneau de propriétés (modes débutant/expert)
 │   ├── alerts_panel.py  Panneau d'alertes de validation
 │   ├── layers_panel.py  Panneau « Couches de mousse »
-│   ├── view3d.py        Vue 3D isométrique (QPainter)
+│   ├── view3d.py        Vue 3D interactive orbitale (QPainter)
+│   ├── exploded_view.py Vue éclatée des couches
 │   └── dialogs.py       Paramètres du projet, choix de nesting
 ├── vision/              Import photo (OpenCV)
 │   ├── image_import.py  Session d'import (orchestration)
@@ -143,7 +144,37 @@ Le DXF est exporté en repère machine (axe Y vers le haut, `$INSUNITS=4`).
 
 ---
 
-## État actuel (v0.2)
+## État actuel (v0.3)
+
+### Nouveautés v0.3
+
+- **calcul des couches sans couvercle** : le couvercle de la valise n'est
+  jamais une couche de mousse ; la couche supérieure est toujours
+  découpée ; rôles fond / découpée / compensation / soutien ;
+- **calcul objet par objet** : chaque couche sait exactement quelles
+  formes la découpent (traversante ou partielle, profondeur entamée) —
+  un oculaire de 25 mm ne touche que la couche du haut, une monture de
+  85 mm traverse deux couches et entame la troisième ; le PDF de
+  contrôle détaille profondeurs et couches par objet ;
+- **vue éclatée des couches** (Ctrl+4) : chaque couche séparée avec ses
+  seules découpes, épaisseur, rôle, sélection au clic, cases
+  masquer/afficher, capture PNG ;
+- **vue 3D interactive** (Ctrl+3) : rotation au clic gauche, zoom
+  molette, pan clic milieu/droit ; clic sur un logement = sélection
+  synchronisée avec la 2D ; fiche de l'objet (empreinte, profondeur,
+  hauteur réelle, couches traversées) ; effeuillage des couches ;
+  noms d'objets optionnels — QPainter pur, aucun OpenGL requis ;
+- **aides de placement 2D** : centres des objets et de la plaque, axes,
+  distances aux bords et entre objets sélectionnés, guides d'alignement
+  automatiques et magnétisme aux centres/bords (plafonné à 3 mm),
+  désactivables — jamais présentes dans les exports ;
+- **arrondis sûrs** : avertissement clair quand le rayon demandé est
+  trop grand pour la géométrie (repli sur angles vifs, l'objet ne
+  disparaît jamais) ; arrondis applicables aux formes composées ;
+- **booléens multi-îlots** : une soustraction qui coupe une forme en
+  deux produit deux formes propres.
+
+### Acquis v0.2
 
 Tout le MVP v0.1, plus :
 

@@ -6,6 +6,8 @@ import math
 
 import pytest
 
+from shapely.geometry import Polygon
+
 from foamforge.core.geometry import (
     CircleShape,
     CutoutSpec,
@@ -114,3 +116,38 @@ def test_distance_and_center_of_mass() -> None:
 def test_degenerate_polygon_is_safe() -> None:
     poly = PolygonShape(points_mm=[(0, 0)])
     assert poly.cut_polygon().area > 0
+
+
+def test_corner_radius_applied_detection() -> None:
+    """Petit objet + grand rayon : repli détectable (pour avertir)."""
+    ok = RectShape(width_mm=60, height_mm=40,
+                   spec=CutoutSpec(margin_mm=0, corner_radius_mm=8))
+    assert ok.corner_radius_applied()
+    too_big = RectShape(width_mm=20, height_mm=10,
+                        spec=CutoutSpec(margin_mm=0, corner_radius_mm=12))
+    assert not too_big.corner_radius_applied()
+    # Le repli garde l'objet visible : jamais de géométrie vide.
+    assert too_big.cut_polygon().area > 0
+
+
+def test_corner_radius_on_compound_shape() -> None:
+    """Arrondi appliqué sur une forme fusionnée (angles du L adoucis)."""
+    from foamforge.core.booleans import merge_shapes
+
+    sources = [
+        RectShape(width_mm=100, height_mm=40, x_mm=50, y_mm=20,
+                  spec=CutoutSpec(margin_mm=0)),
+        RectShape(width_mm=40, height_mm=100, x_mm=20, y_mm=50,
+                  spec=CutoutSpec(margin_mm=0)),
+    ]
+    compound, = merge_shapes(sources)
+    compound.spec.margin_mm = 0.0
+    sharp_area = compound.cut_polygon().area
+    compound.spec.corner_radius_mm = 6.0
+    rounded_area = compound.cut_polygon().area
+    assert compound.corner_radius_applied()
+    assert rounded_area < sharp_area  # angles convexes adoucis
+    # L'emprise reste identique : l'arrondi ne déforme pas la silhouette.
+    assert compound.cut_polygon().bounds == pytest.approx(
+        Polygon(compound.object_polygon()).bounds, abs=0.05
+    )

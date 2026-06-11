@@ -147,9 +147,9 @@ def test_3d_view_toggle_and_render(app) -> None:
     window.set_project(project)
     window.layers_panel.compute()
 
-    # Bascule 2D → 3D.
+    # Bascule 2D → 3D (la page 3D embarque le visualiseur + contrôles).
     window._view3d_action.setChecked(True)
-    assert window._center_stack.currentWidget() is window.view3d
+    assert window._center_stack.currentWidget() is window._page3d
 
     # Rendu réel du widget 3D : ne doit lever aucune exception.
     window.view3d.resize(800, 600)
@@ -157,7 +157,7 @@ def test_3d_view_toggle_and_render(app) -> None:
     window.view3d.render(image)
 
     # Retour 2D.
-    window._view3d_action.setChecked(False)
+    window._view2d_action.setChecked(True)
     assert window._center_stack.currentWidget() is window.canvas
 
     window._dirty = False

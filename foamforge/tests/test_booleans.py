@@ -113,3 +113,28 @@ def test_compound_margin_still_applies() -> None:
 def test_merge_requires_two_shapes() -> None:
     with pytest.raises(BooleanOperationError):
         merge_shapes([RectShape()])
+
+
+def test_subtract_splitting_base_creates_islands() -> None:
+    """Une soustraction qui coupe la base en deux produit deux formes."""
+    base = RectShape(width_mm=100, height_mm=40, x_mm=0, y_mm=0,
+                     spec=CutoutSpec(name="Barre", depth_mm=30))
+    splitter = RectShape(width_mm=10, height_mm=60, x_mm=0, y_mm=0)
+    islands = subtract_shapes(base, [splitter])
+    assert len(islands) == 2
+    # Le plus grand îlot garde le nom, le second est numéroté.
+    assert islands[0].object_polygon().area >= islands[1].object_polygon().area
+    assert "(2)" in islands[1].spec.name
+    total = sum(s.object_polygon().area for s in islands)
+    assert total == pytest.approx(100 * 40 - 10 * 40, rel=1e-6)
+
+
+def test_merge_islands_opt_in() -> None:
+    """La fusion de formes disjointes reste une erreur par défaut, mais
+    peut produire des îlots si demandé explicitement."""
+    a = RectShape(width_mm=20, height_mm=20, x_mm=0, y_mm=0)
+    b = RectShape(width_mm=20, height_mm=20, x_mm=200, y_mm=200)
+    with pytest.raises(BooleanOperationError):
+        merge_shapes([a, b])
+    islands = merge_shapes([a, b], split_islands=True)
+    assert len(islands) == 2

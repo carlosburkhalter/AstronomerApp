@@ -115,19 +115,50 @@ def export_png(project: Project, path: str | Path, dpi: float = _PREVIEW_DPI) ->
     return path
 
 
+_STRATEGY_LABELS = {
+    "through": "traversante",
+    "partial_support": "maintien partiel",
+    "pocket": "poche",
+}
+
+
+def _per_object_layer_lines(project: Project) -> list[str]:
+    """Détail fabrication : pour chaque objet, profondeur, stratégie et
+    couches découpées (« la couche sait ce qu'elle contient » — et le
+    document de contrôle aussi)."""
+    if not project.foam_layers:
+        return []
+    lines = ["Détail par objet (couches numérotées du fond vers le haut) :"]
+    assignments = project.layer_assignments()
+    for shape in sorted(project.shapes, key=lambda s: s.spec.cut_order):
+        if shape.kind is ShapeKind.TEXT:
+            continue
+        parts = []
+        for assignment in assignments:
+            for cut in assignment.cuts:
+                if cut.shape_id != shape.id or cut.is_surface:
+                    continue
+                detail = (
+                    "traverse" if cut.through
+                    else f"{cut.depth_in_layer_mm:.0f} mm"
+                )
+                parts.append(f"C{assignment.index} ({detail})")
+        strategy = _STRATEGY_LABELS[shape.spec.cut_strategy()]
+        lines.append(
+            f"  • {shape.spec.name} — {shape.spec.depth_mm:.0f} mm, "
+            f"{strategy} — couches : {', '.join(parts) or 'aucune'}"
+        )
+    return lines
+
+
 def export_pdf(project: Project, path: str | Path) -> Path:
-    """Exporte le PDF de contrôle : rendu + cartouche + checklist."""
+    """Exporte le PDF de contrôle : rendu + cartouche + détail par couche."""
     preview = render_preview(project)
     width, height = preview.size
 
-    # Cartouche au-dessus du rendu (4 lignes + empilement éventuel).
-    header_height = 260
-    page = Image.new("RGB", (width, height + header_height), "#ffffff")
-    draw = ImageDraw.Draw(page)
     title_font = _font(36)
     body_font = _font(22)
     sheet = project.sheet
-    draw.text((40, 24), f"FoamForge — {project.name}", fill="#000000", font=title_font)
     lines = [
         f"Date : {date.today().isoformat()}",
         f"Plaque : {sheet.width_mm:.0f} × {sheet.height_mm:.0f} × "
@@ -145,6 +176,13 @@ def export_pdf(project: Project, path: str | Path) -> Path:
             f"Empilement (fond → haut) : {stack} = {total:.0f} mm "
             f"pour {project.case_depth_mm:.0f} mm intérieurs"
         )
+    lines += _per_object_layer_lines(project)
+
+    header_height = 100 + len(lines) * 36 + 24
+    page = Image.new("RGB", (width, height + header_height), "#ffffff")
+    draw = ImageDraw.Draw(page)
+    draw.text((40, 24), f"FoamForge — {project.name}", fill="#000000",
+              font=title_font)
     y = 84
     for line in lines:
         draw.text((40, y), line, fill="#333333", font=body_font)

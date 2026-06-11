@@ -178,10 +178,11 @@ class ShapeItem(QGraphicsItem):
             change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
             and not self._syncing
         ):
-            # Magnétisme sur la grille du projet.
+            # Magnétisme : grille, puis centres/bords (aides de placement).
             step = self._canvas.project.grid_step_mm
             point: QPointF = value
-            return QPointF(snap(point.x(), step), snap(point.y(), step))
+            snapped = QPointF(snap(point.x(), step), snap(point.y(), step))
+            return self._canvas.snap_with_aids(self, snapped)
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
             and not self._syncing
@@ -209,6 +210,10 @@ class FoamCanvas(QGraphicsView):
         # Ordre chronologique de sélection (ids) : nécessaire aux opérations
         # booléennes où l'ordre compte (base de soustraction = 1re forme).
         self._selection_order: list[str] = []
+        # Aides de placement (centres, axes, guides, snap intelligents).
+        # Purement visuelles : jamais présentes dans les exports.
+        self.aids_enabled = True
+        self._guides: list[tuple[str, float]] = []  # ('v'|'h', valeur mm)
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
@@ -351,6 +356,184 @@ class FoamCanvas(QGraphicsView):
                 y += step
 
     # ------------------------------------------------------------------ #
+    # Aides de placement : snap intelligent + guides d'alignement
+    # ------------------------------------------------------------------ #
+    def set_aids_enabled(self, enabled: bool) -> None:
+        self.aids_enabled = enabled
+        self._guides = []
+        self.viewport().update()
+
+    def clear_guides(self) -> None:
+        if self._guides:
+            self._guides = []
+            self.viewport().update()
+
+    def _snap_tolerance_mm(self) -> float:
+        """Tolérance d'accrochage : ≈ 6 px à l'écran, plafonnée à 3 mm.
+
+        Le plafond évite les « sauts » brutaux à faible zoom (et les
+        accrochages parasites lors de déplacements programmatiques).
+        """
+        zoom = max(self.transform().m11(), 1e-6)
+        return min(6.0 / zoom, 3.0)
+
+    def snap_with_aids(self, item: ShapeItem, point: QPointF) -> QPointF:
+        """Accrochage aux centres et bords (après le snap grille).
+
+        Cibles, par axe : centre de la plaque, centres des autres formes,
+        alignement bord à bord avec les autres formes. La cible la plus
+        proche gagne ; les guides actifs sont mémorisés pour l'affichage.
+        """
+        if not self.aids_enabled:
+            self.clear_guides()
+            return point
+        tolerance = self._snap_tolerance_mm()
+        shape = item.model
+        # Demi-empreinte de la découpe (constante pendant le drag).
+        minx, miny, maxx, maxy = shape.cut_polygon().bounds
+        left, right = minx - shape.x_mm, maxx - shape.x_mm
+        top, bottom = miny - shape.y_mm, maxy - shape.y_mm
+
+        sheet = self.project.sheet
+        # (valeur cible pour le CENTRE, position du guide à afficher)
+        targets_x: list[tuple[float, float]] = [
+            (sheet.width_mm / 2, sheet.width_mm / 2),
+        ]
+        targets_y: list[tuple[float, float]] = [
+            (sheet.height_mm / 2, sheet.height_mm / 2),
+        ]
+        for other in self.project.shapes:
+            if other.id == shape.id:
+                continue
+            targets_x.append((other.x_mm, other.x_mm))
+            targets_y.append((other.y_mm, other.y_mm))
+            ominx, ominy, omaxx, omaxy = other.cut_polygon().bounds
+            # Alignements bord à bord (gauche-gauche, droite-droite...).
+            targets_x += [
+                (ominx - left, ominx), (omaxx - right, omaxx),
+                (ominx - right, ominx), (omaxx - left, omaxx),
+            ]
+            targets_y += [
+                (ominy - top, ominy), (omaxy - bottom, omaxy),
+                (ominy - bottom, ominy), (omaxy - top, omaxy),
+            ]
+
+        guides: list[tuple[str, float]] = []
+        x, y = point.x(), point.y()
+        best_x = min(targets_x, key=lambda t: abs(t[0] - x))
+        if abs(best_x[0] - x) <= tolerance:
+            x = best_x[0]
+            guides.append(("v", best_x[1]))
+        best_y = min(targets_y, key=lambda t: abs(t[0] - y))
+        if abs(best_y[0] - y) <= tolerance:
+            y = best_y[0]
+            guides.append(("h", best_y[1]))
+
+        if guides != self._guides:
+            self._guides = guides
+            self.viewport().update()
+        return QPointF(x, y)
+
+    # ------------------------------------------------------------------ #
+    # Premier plan : aides visuelles (jamais exportées)
+    # ------------------------------------------------------------------ #
+    def drawForeground(self, painter: QPainter, rect: QRectF) -> None:  # noqa: N802
+        if not self.aids_enabled:
+            return
+        sheet = self.project.sheet
+        zoom = max(self.transform().m11(), 1e-6)
+        cx, cy = sheet.width_mm / 2, sheet.height_mm / 2
+
+        # Axes X/Y de la plaque + croix du centre.
+        axis_pen = QPen(QColor(255, 255, 255, 50), 0)
+        axis_pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(axis_pen)
+        painter.drawLine(QPointF(0, cy), QPointF(sheet.width_mm, cy))
+        painter.drawLine(QPointF(cx, 0), QPointF(cx, sheet.height_mm))
+        center_pen = QPen(QColor("#ffd54f"), 0)
+        painter.setPen(center_pen)
+        size = 8.0 / zoom
+        painter.drawLine(QPointF(cx - size, cy), QPointF(cx + size, cy))
+        painter.drawLine(QPointF(cx, cy - size), QPointF(cx, cy + size))
+
+        # Centres de toutes les formes.
+        mark_pen = QPen(QColor("#80deea"), 0)
+        painter.setPen(mark_pen)
+        mark = 4.0 / zoom
+        for shape in self.project.shapes:
+            painter.drawLine(
+                QPointF(shape.x_mm - mark, shape.y_mm),
+                QPointF(shape.x_mm + mark, shape.y_mm),
+            )
+            painter.drawLine(
+                QPointF(shape.x_mm, shape.y_mm - mark),
+                QPointF(shape.x_mm, shape.y_mm + mark),
+            )
+
+        # Guides d'alignement actifs (pendant un déplacement).
+        guide_pen = QPen(QColor("#00e5ff"), 0)
+        guide_pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(guide_pen)
+        for orientation, value in self._guides:
+            if orientation == "v":
+                painter.drawLine(
+                    QPointF(value, -20), QPointF(value, sheet.height_mm + 20)
+                )
+            else:
+                painter.drawLine(
+                    QPointF(-20, value), QPointF(sheet.width_mm + 20, value)
+                )
+
+        selected = self.selected_shapes()
+        font = painter.font()
+        font.setPointSizeF(max(9.0 / zoom, 2.0))
+        painter.setFont(font)
+
+        # Forme sélectionnée : coordonnées du centre + distances aux bords.
+        if len(selected) == 1:
+            shape = selected[0]
+            minx, miny, maxx, maxy = shape.cut_polygon().bounds
+            painter.setPen(QPen(QColor("#ffd54f"), 0))
+            painter.drawText(
+                QPointF(shape.x_mm + mark * 2, shape.y_mm - mark * 2),
+                f"({shape.x_mm:.1f} ; {shape.y_mm:.1f}) mm",
+            )
+            distance_pen = QPen(QColor("#ffab91"), 0)
+            distance_pen.setStyle(Qt.PenStyle.DotLine)
+            painter.setPen(distance_pen)
+            mid_y = (miny + maxy) / 2
+            mid_x = (minx + maxx) / 2
+            for x1, y1, x2, y2, label_value in (
+                (0, mid_y, minx, mid_y, minx),
+                (maxx, mid_y, sheet.width_mm, mid_y, sheet.width_mm - maxx),
+                (mid_x, 0, mid_x, miny, miny),
+                (mid_x, maxy, mid_x, sheet.height_mm,
+                 sheet.height_mm - maxy),
+            ):
+                painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+                painter.drawText(
+                    QPointF((x1 + x2) / 2, (y1 + y2) / 2 - 2.0 / zoom),
+                    f"{label_value:.1f}",
+                )
+
+        # Deux formes sélectionnées : distances centre à centre et paroi.
+        if len(selected) == 2:
+            a, b = selected
+            painter.setPen(QPen(QColor("#ce93d8"), 0, Qt.PenStyle.DashLine))
+            painter.drawLine(
+                QPointF(a.x_mm, a.y_mm), QPointF(b.x_mm, b.y_mm)
+            )
+            centers = (
+                (a.x_mm - b.x_mm) ** 2 + (a.y_mm - b.y_mm) ** 2
+            ) ** 0.5
+            wall = a.cut_polygon().distance(b.cut_polygon())
+            painter.setPen(QPen(QColor("#ce93d8"), 0))
+            painter.drawText(
+                QPointF((a.x_mm + b.x_mm) / 2, (a.y_mm + b.y_mm) / 2),
+                f"centres : {centers:.1f} mm — paroi : {wall:.1f} mm",
+            )
+
+    # ------------------------------------------------------------------ #
     # Souris : zoom, pan, dessin
     # ------------------------------------------------------------------ #
     def wheelEvent(self, event) -> None:  # noqa: N802
@@ -400,6 +583,7 @@ class FoamCanvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self.clear_guides()  # fin de déplacement : guides effacés
         if event.button() == Qt.MouseButton.MiddleButton:
             self._panning = False
             self.setCursor(Qt.CursorShape.ArrowCursor)

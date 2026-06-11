@@ -43,7 +43,7 @@
   "notes": "Vérifier la dessicant-box avant chaque sortie.",
   "shapes": [
     {
-      "id": "4fa0f77bf355",
+      "id": "ef467792cb03",
       "kind": "rect",
       "x_mm": 90,
       "y_mm": 95,
@@ -66,7 +66,7 @@
       }
     },
     {
-      "id": "a28909c85ee2",
+      "id": "8922bc152cac",
       "kind": "circle",
       "x_mm": 240,
       "y_mm": 95,
@@ -88,7 +88,7 @@
       }
     },
     {
-      "id": "691d668b4dd5",
+      "id": "d971c969a99a",
       "kind": "rect",
       "x_mm": 370,
       "y_mm": 110,
@@ -111,7 +111,7 @@
       }
     },
     {
-      "id": "498396e0aab1",
+      "id": "2cadc936943a",
       "kind": "circle",
       "x_mm": 70,
       "y_mm": 240,
@@ -133,7 +133,7 @@
       }
     },
     {
-      "id": "483285836411",
+      "id": "9a16bbb4ce0a",
       "kind": "circle",
       "x_mm": 150,
       "y_mm": 240,
@@ -155,7 +155,7 @@
       }
     },
     {
-      "id": "51b863e8e3d5",
+      "id": "20b6fc046789",
       "kind": "circle",
       "x_mm": 230,
       "y_mm": 240,
@@ -177,7 +177,7 @@
       }
     },
     {
-      "id": "ff6b54e11718",
+      "id": "739cf0c09f5c",
       "kind": "rect",
       "x_mm": 360,
       "y_mm": 255,
@@ -200,7 +200,7 @@
       }
     },
     {
-      "id": "b159f32e6d80",
+      "id": "ec12a4a0e87e",
       "kind": "text",
       "x_mm": 470,
       "y_mm": 265,

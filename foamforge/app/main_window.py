@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -54,6 +54,7 @@ from foamforge.export.xtool_exporter import (
 from foamforge.ui.alerts_panel import AlertsPanel
 from foamforge.ui.canvas import FoamCanvas
 from foamforge.ui.dialogs import NestingDialog, ProjectSettingsDialog
+from foamforge.ui.exploded_view import ExplodedView
 from foamforge.ui.layers_panel import LayersPanel
 from foamforge.ui.property_panel import PropertyPanel
 from foamforge.ui.toolbars import build_tool_toolbar
@@ -72,14 +73,55 @@ class MainWindow(QMainWindow):
         self._project_path: Path | None = None
         self._dirty = False
 
-        # --- Centre : canvas 2D + vue 3D commutables --------------------- #
-        from PySide6.QtWidgets import QStackedWidget
+        # --- Centre : canvas 2D, vue 3D, vue éclatée (commutables) ------- #
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QHBoxLayout,
+            QLabel,
+            QPushButton,
+            QSpinBox,
+            QStackedWidget,
+            QVBoxLayout,
+            QWidget,
+        )
 
         self.canvas = FoamCanvas(self)
         self.view3d = FoamView3D(self)
+        self.exploded_view = ExplodedView(self)
+
+        # Page 3D : visualiseur + barre de contrôles (couches, étiquettes).
+        page3d = QWidget(self)
+        layout3d = QVBoxLayout(page3d)
+        layout3d.setContentsMargins(0, 0, 0, 0)
+        controls3d = QHBoxLayout()
+        controls3d.setContentsMargins(8, 4, 8, 0)
+        controls3d.addWidget(QLabel("Couches visibles :"))
+        self.visible_layers_spin = QSpinBox()
+        self.visible_layers_spin.setRange(1, 99)
+        self.visible_layers_spin.setToolTip(
+            "Effeuillage : masque les couches du dessus pour inspecter "
+            "les découpes des couches inférieures."
+        )
+        self.visible_layers_spin.valueChanged.connect(
+            self._on_visible_layers_changed
+        )
+        controls3d.addWidget(self.visible_layers_spin)
+        self.labels_checkbox = QCheckBox("Noms des objets")
+        self.labels_checkbox.setChecked(True)
+        self.labels_checkbox.toggled.connect(self.view3d.set_show_labels)
+        controls3d.addWidget(self.labels_checkbox)
+        reset_camera = QPushButton("Recentrer la vue")
+        reset_camera.clicked.connect(self.view3d.reset_camera)
+        controls3d.addWidget(reset_camera)
+        controls3d.addStretch()
+        layout3d.addLayout(controls3d)
+        layout3d.addWidget(self.view3d, stretch=1)
+
         self._center_stack = QStackedWidget(self)
         self._center_stack.addWidget(self.canvas)
-        self._center_stack.addWidget(self.view3d)
+        self._center_stack.addWidget(page3d)
+        self._center_stack.addWidget(self.exploded_view)
+        self._page3d = page3d
         self.setCentralWidget(self._center_stack)
 
         # --- Barre d'outils gauche -------------------------------------- #
@@ -186,11 +228,36 @@ class MainWindow(QMainWindow):
         menu_view = self.menuBar().addMenu("&Affichage")
         self._add_action(menu_view, "Ajuster à la plaque", "Ctrl+0",
                          self.canvas.fit_sheet)
+        menu_view.addSeparator()
+        view_group = QActionGroup(self)
+        view_group.setExclusive(True)
+        self._view2d_action = QAction("Vue 2D", self)
+        self._view2d_action.setCheckable(True)
+        self._view2d_action.setChecked(True)
+        self._view2d_action.setShortcut("Ctrl+2")
         self._view3d_action = QAction("Vue 3D", self)
         self._view3d_action.setCheckable(True)
         self._view3d_action.setShortcut("Ctrl+3")
-        self._view3d_action.toggled.connect(self._toggle_3d)
-        menu_view.addAction(self._view3d_action)
+        self._exploded_action = QAction("Vue éclatée des couches", self)
+        self._exploded_action.setCheckable(True)
+        self._exploded_action.setShortcut("Ctrl+4")
+        for action in (self._view2d_action, self._view3d_action,
+                       self._exploded_action):
+            view_group.addAction(action)
+            menu_view.addAction(action)
+            action.toggled.connect(self._on_view_changed)
+        menu_view.addSeparator()
+        self._aids_action = QAction("Aides de placement", self)
+        self._aids_action.setCheckable(True)
+        self._aids_action.setChecked(True)
+        self._aids_action.setToolTip(
+            "Centres, axes, distances, guides d'alignement et "
+            "magnétisme intelligent (jamais exportés)."
+        )
+        self._aids_action.toggled.connect(self.canvas.set_aids_enabled)
+        menu_view.addAction(self._aids_action)
+        self._add_action(menu_view, "Capturer la vue éclatée (PNG)…", None,
+                         self.export_exploded_png)
         menu_view.addSeparator()
         self._expert_action = QAction("Mode expert", self)
         self._expert_action.setCheckable(True)
@@ -218,6 +285,8 @@ class MainWindow(QMainWindow):
         self.property_panel.shape_edited.connect(self.canvas.refresh_shape)
         self.alerts_panel.issue_activated.connect(self._select_shapes)
         self.layers_panel.layers_changed.connect(self._on_model_changed)
+        self.layers_panel.layers_changed.connect(self._sync_layers_spin)
+        self.view3d.shape_clicked.connect(self._on_3d_shape_clicked)
 
     # ------------------------------------------------------------------ #
     # Cycle de vie du projet
@@ -226,7 +295,9 @@ class MainWindow(QMainWindow):
         self._project_path = path
         self.canvas.set_project(project)
         self.view3d.set_project(project)
+        self.exploded_view.set_project(project)
         self.layers_panel.set_project(project)
+        self._sync_layers_spin()
         self.property_panel.set_shape(None)
         self._dirty = False
         self._update_title()
@@ -406,14 +477,50 @@ class MainWindow(QMainWindow):
         self._run_boolean("intersect")
 
     # ------------------------------------------------------------------ #
-    # Vue 3D
+    # Bascule 2D / 3D / éclatée
     # ------------------------------------------------------------------ #
-    def _toggle_3d(self, enabled: bool) -> None:
-        self._center_stack.setCurrentWidget(
-            self.view3d if enabled else self.canvas
-        )
-        if enabled:
+    def _on_view_changed(self) -> None:
+        if self._view3d_action.isChecked():
+            self._sync_layers_spin()
+            self._center_stack.setCurrentWidget(self._page3d)
             self.view3d.refresh()
+        elif self._exploded_action.isChecked():
+            self._center_stack.setCurrentWidget(self.exploded_view)
+            self.exploded_view.refresh()
+        else:
+            self._center_stack.setCurrentWidget(self.canvas)
+
+    def _sync_layers_spin(self) -> None:
+        """Aligne le spin « couches visibles » sur la pile du projet."""
+        count = len(self.canvas.project.foam_layers) or 1
+        self.visible_layers_spin.blockSignals(True)
+        self.visible_layers_spin.setMaximum(count)
+        self.visible_layers_spin.setValue(count)
+        self.visible_layers_spin.blockSignals(False)
+        self.view3d.set_visible_layer_count(None)
+
+    def _on_visible_layers_changed(self, value: int) -> None:
+        total = len(self.canvas.project.foam_layers) or 1
+        self.view3d.set_visible_layer_count(
+            None if value >= total else value
+        )
+
+    def _on_3d_shape_clicked(self, shape_id: str) -> None:
+        """Sélection depuis la vue 3D → sélection 2D synchronisée."""
+        self.canvas.scene().clearSelection()
+        item = self.canvas.item_for(shape_id)
+        if item is not None:
+            item.setSelected(True)
+
+    def export_exploded_png(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Capturer la vue éclatée",
+            f"{self.canvas.project.name}_eclate.png", "PNG (*.png)"
+        )
+        if not filename:
+            return
+        self.exploded_view.diagram.export_png(filename)
+        self.statusBar().showMessage(f"Capture : {filename}", 4000)
 
     # ------------------------------------------------------------------ #
     # Exports xTool P2S
@@ -521,12 +628,17 @@ class MainWindow(QMainWindow):
         # Le déplacement à la souris doit se refléter dans le panneau,
         # sinon la prochaine édition réappliquerait l'ancienne position.
         self.property_panel.sync_position()
-        # La vue 3D suit toutes les modifications (repaint léger).
+        # Les vues 3D et éclatée suivent toutes les modifications.
         self.view3d.refresh()
+        self.exploded_view.refresh()
         self._validation_timer.start()
 
     def _on_selection_changed(self, shapes: list) -> None:
         self.property_panel.set_shape(shapes[0] if len(shapes) == 1 else None)
+        # La vue 3D suit la sélection 2D (surbrillance + fiche objet).
+        self.view3d.set_selected_ids([s.id for s in shapes])
+        # Le canvas redessine les aides (distances de la sélection).
+        self.canvas.viewport().update()
 
     def _on_cursor_moved(self, x_mm: float, y_mm: float) -> None:
         self._cursor_label.setText(f"x: {x_mm:.1f} mm , y: {y_mm:.1f} mm")
