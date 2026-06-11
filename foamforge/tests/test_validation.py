@@ -152,8 +152,8 @@ def test_pocket_depth_vs_cuttable_layers() -> None:
     project = _project(case_depth_mm=120.0)
     project.foam_layers = [
         FoamLayer(40.0, LayerRole.BOTTOM),
+        FoamLayer(40.0, LayerRole.SPACER),
         FoamLayer(40.0, LayerRole.CUTOUT),
-        FoamLayer(40.0, LayerRole.LID),
     ]
     project.add_shape(RectShape(
         width_mm=80, height_mm=60, x_mm=150, y_mm=150,

@@ -19,8 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from foamforge.core.geometry import CutType, Shape, ShapeKind, TextShape
-from foamforge.core.layers import LayerPlan, LayerRole, pocket_cuts_per_layer
+from foamforge.core.geometry import Shape, ShapeKind, TextShape
+from foamforge.core.layers import LayerPlan, LayerRole
 from foamforge.core.project import Project
 from foamforge.export import (
     LAYER_CUT_FULL,
@@ -163,7 +163,8 @@ def export_layers_svg(
       profondeur restante annotée ;
     - une découpe ``FULL`` du projet traverse toutes les couches CUTOUT ;
     - gravures et textes vont sur la couche CUTOUT supérieure uniquement ;
-    - les couches BOTTOM/SPACER/LID ne contiennent que le contour plaque.
+    - les couches BOTTOM/SPACER/SUPPORT ne contiennent que le contour
+      de plaque.
 
     Retourne la liste des fichiers écrits (ordre : du fond vers le haut).
     """
@@ -179,71 +180,44 @@ def export_layers_svg(
     directory.mkdir(parents=True, exist_ok=True)
     base = base_name or project.name.replace(" ", "_")
     sheet = project.sheet
-    shapes = sorted(project.shapes, key=lambda s: s.spec.cut_order)
-
-    # Index (dans la pile complète, du fond vers le haut) des couches CUTOUT,
-    # puis ordre surface → fond pour la répartition des poches.
-    cutout_indices_top_down = [
-        i for i, layer in reversed(list(enumerate(plan.layers)))
-        if layer.role is LayerRole.CUTOUT
-    ]
-
-    # Préparation des entrées par couche de la pile.
-    entries_per_layer: list[list[SvgPolygonEntry | SvgTextEntry]] = [
-        [SvgPolygonEntry(sheet.polygon(), LAYER_FOAM_BORDER)]
-        for _ in plan.layers
-    ]
-
-    top_cutout = cutout_indices_top_down[0] if cutout_indices_top_down else None
-    for shape in shapes:
-        if shape.kind is ShapeKind.TEXT or shape.spec.cut_type == CutType.ENGRAVE:
-            # Gravures et textes : surface de la couche découpable du haut.
-            if top_cutout is not None:
-                entries_per_layer[top_cutout].append(
-                    _shape_entry(shape, profile)
-                )
-            continue
-        if shape.spec.cut_type == CutType.FULL:
-            # Découpe complète : traverse toutes les couches découpables.
-            for index in cutout_indices_top_down:
-                entries_per_layer[index].append(
-                    _shape_entry(shape, profile, layer_override=LAYER_CUT_FULL)
-                )
-            continue
-        # Poche : répartition selon la profondeur.
-        cuts = pocket_cuts_per_layer(plan, shape.spec.depth_mm)
-        for index, cut in zip(cutout_indices_top_down, cuts):
-            if cut.depth_in_layer_mm <= 0:
-                continue
-            if cut.through:
-                entries_per_layer[index].append(
-                    _shape_entry(shape, profile, layer_override=LAYER_CUT_FULL,
-                                 depth_note="traversante dans cette couche")
-                )
-            else:
-                entries_per_layer[index].append(
-                    _shape_entry(
-                        shape, profile, layer_override=LAYER_CUT_POCKET,
-                        depth_note=(
-                            f"poche de {cut.depth_in_layer_mm:.1f} mm "
-                            "dans cette couche"
-                        ),
-                    )
-                )
+    shapes_by_id = {s.id: s for s in project.shapes}
 
     written: list[Path] = []
-    for index, (layer, entries) in enumerate(
-        zip(plan.layers, entries_per_layer), start=1
-    ):
-        file_path = directory / _layer_file_name(base, index, layer.role)
+    # L'affectation objet par objet est calculée par le cœur : chaque
+    # couche sait exactement quelles formes la découpent et comment.
+    for assignment in project.layer_assignments():
+        entries: list[SvgPolygonEntry | SvgTextEntry] = [
+            SvgPolygonEntry(sheet.polygon(), LAYER_FOAM_BORDER)
+        ]
+        for cut in assignment.cuts:
+            shape = shapes_by_id[cut.shape_id]
+            if cut.is_surface:
+                entries.append(_shape_entry(shape, profile))
+            elif cut.through:
+                entries.append(_shape_entry(
+                    shape, profile, layer_override=LAYER_CUT_FULL,
+                    depth_note="traversante dans cette couche",
+                ))
+            else:
+                entries.append(_shape_entry(
+                    shape, profile, layer_override=LAYER_CUT_POCKET,
+                    depth_note=(
+                        f"poche de {cut.depth_in_layer_mm:.1f} mm "
+                        "dans cette couche"
+                    ),
+                ))
+        file_path = directory / _layer_file_name(
+            base, assignment.index, assignment.layer.role
+        )
         write_svg_document(
             sheet.width_mm,
             sheet.height_mm,
             entries,
             file_path,
             title=(
-                f"FoamForge — {project.name} — couche {index} "
-                f"({layer.role.label}, {layer.thickness_mm:.0f} mm)"
+                f"FoamForge — {project.name} — couche {assignment.index} "
+                f"({assignment.layer.role.label}, "
+                f"{assignment.layer.thickness_mm:.0f} mm)"
             ),
             stroke_width_mm=profile.stroke_width_mm,
         )

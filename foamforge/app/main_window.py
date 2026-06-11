@@ -361,11 +361,11 @@ class MainWindow(QMainWindow):
                     "soustraction, la première sélectionnée est la base)."
                 )
             if operation == "merge":
-                compound = merge_shapes(shapes)
+                compounds = merge_shapes(shapes)
             elif operation == "subtract":
-                compound = subtract_shapes(shapes[0], shapes[1:])
+                compounds = subtract_shapes(shapes[0], shapes[1:])
             else:
-                compound = intersect_shapes(shapes)
+                compounds = intersect_shapes(shapes)
         except BooleanOperationError as exc:
             QMessageBox.warning(self, "Forme composée", str(exc))
             return
@@ -385,10 +385,16 @@ class MainWindow(QMainWindow):
             for shape in shapes:
                 self.canvas.project.remove_shape(shape.id)
             self.canvas.rebuild_scene()
-        self.canvas.add_shape(compound)
-        self.statusBar().showMessage(
-            f"Forme composée « {compound.spec.name} » créée.", 4000
-        )
+        for compound in compounds:
+            self.canvas.add_shape(compound)
+        if len(compounds) == 1:
+            message = f"Forme composée « {compounds[0].spec.name} » créée."
+        else:
+            message = (
+                f"{len(compounds)} formes créées (le résultat était en "
+                "plusieurs morceaux)."
+            )
+        self.statusBar().showMessage(message, 4000)
 
     def merge_selection(self) -> None:
         self._run_boolean("merge")

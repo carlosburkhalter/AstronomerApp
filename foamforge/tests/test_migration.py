@@ -94,9 +94,9 @@ def test_v2_roundtrip_with_layers(tmp_path: Path) -> None:
         available_foam_thicknesses_mm=[10.0, 20.0, 40.0],
         foam_layers=[
             FoamLayer(20.0, LayerRole.BOTTOM),
+            FoamLayer(20.0, LayerRole.SPACER),
             FoamLayer(40.0, LayerRole.CUTOUT),
             FoamLayer(40.0, LayerRole.CUTOUT),
-            FoamLayer(20.0, LayerRole.LID),
         ],
         min_bottom_floor_mm=15.0,
     )
@@ -111,7 +111,8 @@ def test_v2_roundtrip_with_layers(tmp_path: Path) -> None:
     assert restored.to_dict() == project.to_dict()
     assert restored.case_name == "Nanuk 935"
     assert len(restored.foam_layers) == 4
-    assert restored.foam_layers[1].role is LayerRole.CUTOUT
+    assert restored.foam_layers[1].role is LayerRole.SPACER
+    assert restored.foam_layers[2].role is LayerRole.CUTOUT
     assert restored.shapes[0].spec.object_height_mm == 75
     assert restored.cuttable_depth_mm() == pytest.approx(80)
 

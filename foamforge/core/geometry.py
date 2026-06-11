@@ -76,6 +76,20 @@ class CutoutSpec:
         # l'enum str CutType en chaîne pure ; on renormalise toujours.
         self.cut_type = CutType(self.cut_type)
 
+    def cut_strategy(self) -> str:
+        """Stratégie de maintien dérivée des paramètres.
+
+        - ``through``         : découpe traversante ;
+        - ``partial_support`` : poche moins profonde que l'objet
+          (maintien partiel volontaire) ;
+        - ``pocket``          : logement classique.
+        """
+        if self.cut_type == CutType.FULL:
+            return "through"
+        if 0 < self.object_height_mm and self.depth_mm < self.object_height_mm:
+            return "partial_support"
+        return "pocket"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -149,6 +163,10 @@ class Shape:
         - Le rayon d'arrondi est appliqué par ouverture morphologique
           (érosion puis dilatation) : seuls les angles convexes sont
           adoucis, le polygone reste inclus dans son offset d'origine.
+        - Si le rayon est trop grand pour la géométrie, repli propre sur
+          la version non arrondie : l'objet ne disparaît jamais
+          (:meth:`corner_radius_applied` permet de le détecter pour
+          avertir l'utilisateur).
         """
         poly = self.object_polygon()
         margin = max(self.spec.margin_mm, 0.0)
@@ -164,6 +182,26 @@ class Shape:
             if not opened.is_empty and isinstance(opened, Polygon):
                 poly = opened
         return poly
+
+    def corner_radius_applied(self) -> bool:
+        """Vrai si le rayon d'arrondi demandé est réellement applicable.
+
+        Faux uniquement quand un rayon > 0 est demandé mais que la forme
+        est trop petite (le moteur a dû replier sur les angles vifs).
+        """
+        radius = max(self.spec.corner_radius_mm, 0.0)
+        if radius <= 0:
+            return True
+        poly = self.object_polygon()
+        margin = max(self.spec.margin_mm, 0.0)
+        if margin > 0:
+            poly = poly.buffer(margin, quad_segs=_QUAD_SEGS, join_style="round")
+        # Même condition exacte que le repli de cut_polygon() : vide OU
+        # éclaté en plusieurs morceaux = rayon inapplicable.
+        opened = poly.buffer(-radius, quad_segs=_QUAD_SEGS).buffer(
+            radius, quad_segs=_QUAD_SEGS
+        )
+        return (not opened.is_empty) and isinstance(opened, Polygon)
 
     def bounds(self) -> tuple[float, float, float, float]:
         """Boîte englobante (minx, miny, maxx, maxy) de la découpe, en mm."""

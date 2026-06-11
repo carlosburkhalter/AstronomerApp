@@ -128,6 +128,18 @@ class Project:
         plan.layers = list(self.foam_layers)
         return plan
 
+    def layer_assignments(self):
+        """Affectation objet par objet des découpes aux couches.
+
+        Voir :func:`foamforge.core.layers.compute_layer_assignments`.
+        """
+        from foamforge.core.layers import compute_layer_assignments
+
+        return compute_layer_assignments(
+            self.layer_plan(),
+            sorted(self.shapes, key=lambda s: s.spec.cut_order),
+        )
+
     def cuttable_depth_mm(self) -> float:
         """Profondeur découpable : somme des couches CUTOUT, ou l'épaisseur
         de la plaque unique si aucun empilement n'est défini."""

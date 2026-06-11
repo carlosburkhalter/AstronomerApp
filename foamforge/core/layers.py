@@ -1,19 +1,23 @@
 """FoamLayerPlanner : calcul de l'empilement de couches de mousse.
 
-À partir de la profondeur intérieure de la valise, des épaisseurs de
-mousse disponibles, de la hauteur des objets et des profondeurs de poche,
-propose un empilement exact (somme des couches = profondeur intérieure)
-avec un rôle par couche :
+À partir de la profondeur intérieure DISPONIBLE POUR LA MOUSSE (partie
+basse de la valise — le couvercle de la valise n'est jamais compté), des
+épaisseurs disponibles, de la hauteur des objets et des profondeurs de
+poche, propose un empilement exact (somme = profondeur intérieure) avec
+un rôle par couche :
 
-- ``BOTTOM`` : couche de fond, jamais découpée (protège le dessous) ;
-- ``CUTOUT`` : couche découpée (les poches y descendent) ;
-- ``SPACER`` : couche de compensation non découpée sous les CUTOUT ;
-- ``LID``    : couche de dessus/couvercle, posée sur les objets.
+- ``BOTTOM``  : couche de fond, jamais découpée (protège le dessous) ;
+- ``CUTOUT``  : couche découpée (les poches y descendent) ;
+- ``SPACER``  : couche de compensation non découpée sous les CUTOUT ;
+- ``SUPPORT`` : couche de soutien non découpée (réservée à un usage
+  manuel/futur ; le planificateur ne la produit pas).
 
-Convention de profondeur : les poches sont mesurées depuis la SURFACE
-SUPÉRIEURE de la pile découpable (sous le couvercle). Une poche de 30 mm
-dans deux couches CUTOUT de 20 mm traverse la première (20 mm) et entame
-la seconde de 10 mm.
+La couche SUPÉRIEURE de l'empilement est toujours une couche découpée.
+Les poches sont mesurées depuis la surface de la mousse : une poche de
+30 mm dans deux couches CUTOUT de 20 mm traverse la première (20 mm) et
+entame la seconde de 10 mm. Le calcul est fait OBJET PAR OBJET
+(:func:`compute_layer_assignments`) : chaque couche sait exactement
+quelles formes la découpent, en traversant ou partiellement.
 """
 
 from __future__ import annotations
@@ -29,12 +33,13 @@ _MAX_LAYER_COUNT = 32
 
 
 class LayerRole(str, Enum):
-    """Rôle d'une couche dans l'empilement."""
+    """Rôle d'une couche dans l'empilement (le couvercle de la valise
+    n'est PAS une couche de mousse : il n'existe pas de rôle « lid »)."""
 
     BOTTOM = "bottom"
     CUTOUT = "cutout"
     SPACER = "spacer"
-    LID = "lid"
+    SUPPORT = "support"
 
     @property
     def label(self) -> str:
@@ -42,7 +47,7 @@ class LayerRole(str, Enum):
             LayerRole.BOTTOM: "Fond",
             LayerRole.CUTOUT: "Découpée",
             LayerRole.SPACER: "Compensation",
-            LayerRole.LID: "Couvercle",
+            LayerRole.SUPPORT: "Soutien",
         }[self]
 
 
@@ -58,9 +63,15 @@ class FoamLayer:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "FoamLayer":
+        role = data.get("role", LayerRole.CUTOUT.value)
+        # Anciens fichiers v0.2.0 : le rôle « lid » n'existe plus (le
+        # couvercle de la valise n'est pas une couche de mousse) ; ces
+        # couches deviennent de la compensation.
+        if role == "lid":
+            role = LayerRole.SPACER.value
         return cls(
             thickness_mm=float(data["thickness_mm"]),
-            role=LayerRole(data.get("role", LayerRole.CUTOUT.value)),
+            role=LayerRole(role),
         )
 
 
@@ -129,7 +140,6 @@ def plan_layers(
     max_object_height_mm: float = 0.0,
     min_bottom_floor_mm: float = 10.0,
     preferred_layer_count: int | None = None,
-    with_lid: bool = True,
 ) -> LayerPlan:
     """Calcule un empilement de couches remplissant exactement la valise.
 
@@ -139,7 +149,10 @@ def plan_layers(
     :param max_object_height_mm: objet le plus haut (hauteur réelle mesurée).
     :param min_bottom_floor_mm: fond minimal souhaité sous les poches.
     :param preferred_layer_count: si fourni, privilégie ce nombre de couches.
-    :param with_lid: réserver si possible une couche souple de couvercle.
+
+    Le couvercle de la valise n'entre jamais dans le calcul : seule la
+    profondeur disponible pour la mousse est remplie, et la couche du
+    dessus est toujours une couche découpée.
     """
     plan = LayerPlan()
     thicknesses = sorted({t for t in available_foam_thicknesses_mm if t > 0})
@@ -188,7 +201,6 @@ def plan_layers(
             [t / 10.0 for t in combo],
             needed_cut_mm=needed_cut,
             min_bottom_floor_mm=min_bottom_floor_mm,
-            with_lid=with_lid,
         )
         if assignment is None:
             continue
@@ -238,13 +250,13 @@ def _assign_roles(
     combo: list[float],
     needed_cut_mm: float,
     min_bottom_floor_mm: float,
-    with_lid: bool,
 ) -> list[FoamLayer] | None:
     """Affecte les rôles à une combinaison d'épaisseurs (ou None si inapte).
 
     Stratégie : choisir le plus petit sous-ensemble de couches CUTOUT
     couvrant la profondeur nécessaire, le fond le plus fin satisfaisant
-    le minimum, une couche LID si possible, le reste en SPACER.
+    le minimum, le reste en SPACER. Les couches découpées sont placées
+    en haut : la couche supérieure est toujours découpée.
     """
     thicknesses = sorted(combo, reverse=True)  # grandes couches → découpe
 
@@ -268,25 +280,14 @@ def _assign_roles(
     # Fond : il faut au moins min_bottom dans les couches restantes.
     if min_bottom_floor_mm > 0 and sum(remaining) < min_bottom_floor_mm:
         return None
-
-    # Couvercle : la plus fine couche restante, si on peut se le permettre.
-    lid: list[float] = []
-    if with_lid and remaining:
-        candidate = min(remaining)
-        if sum(remaining) - candidate >= min_bottom_floor_mm:
-            lid.append(candidate)
-            remaining.remove(candidate)
-
     bottom = sorted(remaining)  # du fond vers le haut
-    layers = (
+    if min_bottom_floor_mm > 0 and not bottom:
+        return None
+    return (
         [FoamLayer(t, LayerRole.BOTTOM) for t in bottom[:1]]
         + [FoamLayer(t, LayerRole.SPACER) for t in bottom[1:]]
         + [FoamLayer(t, LayerRole.CUTOUT) for t in sorted(cutout)]
-        + [FoamLayer(t, LayerRole.LID) for t in lid]
     )
-    if min_bottom_floor_mm > 0 and not bottom:
-        return None
-    return layers
 
 
 def _score(layers: list[FoamLayer], preferred_count: int | None) -> float:
@@ -337,3 +338,93 @@ def pocket_cuts_per_layer(
             cuts.append(LayerCut(through=False, depth_in_layer_mm=remaining))
             remaining = 0.0
     return cuts
+
+
+# ---------------------------------------------------------------------- #
+# Affectation objet par objet (chaque couche sait ce qu'elle découpe)
+# ---------------------------------------------------------------------- #
+@dataclass
+class ShapeLayerCut:
+    """Ce qu'UNE forme découpe dans UNE couche donnée."""
+
+    shape_id: str
+    through: bool             # traverse toute l'épaisseur de la couche
+    depth_in_layer_mm: float  # profondeur entamée dans cette couche
+    is_surface: bool = False  # gravure/texte : surface uniquement
+
+
+@dataclass
+class LayerAssignment:
+    """Une couche de la pile et la liste exacte de ses découpes."""
+
+    index: int                # 1 = couche du fond, croissant vers le haut
+    layer: FoamLayer
+    z_bottom_mm: float        # altitude du bas de la couche (0 = fond)
+    cuts: list[ShapeLayerCut] = field(default_factory=list)
+
+    @property
+    def z_top_mm(self) -> float:
+        return self.z_bottom_mm + self.layer.thickness_mm
+
+
+def compute_layer_assignments(
+    plan: LayerPlan, shapes: Sequence["object"]
+) -> list[LayerAssignment]:
+    """Calcule, objet par objet, ce que chaque couche doit découper.
+
+    - une poche traverse les couches CUTOUT entièrement couvertes par sa
+      profondeur, puis entame partiellement la suivante ;
+    - une découpe complète (``CutType.FULL``) traverse TOUTES les couches
+      CUTOUT ;
+    - gravures et textes ne marquent que la surface de la couche CUTOUT
+      supérieure ;
+    - les couches BOTTOM/SPACER/SUPPORT ne reçoivent jamais de découpe.
+
+    Retourne une affectation par couche, du fond vers le haut, avec les
+    altitudes (z) de chaque couche pour les vues 3D/éclatée.
+    """
+    from foamforge.core.geometry import CutType, ShapeKind
+
+    assignments: list[LayerAssignment] = []
+    z = 0.0
+    for index, layer in enumerate(plan.layers, start=1):
+        assignments.append(LayerAssignment(index, layer, z))
+        z += layer.thickness_mm
+
+    cutout_top_down = [
+        a for a in reversed(assignments)
+        if a.layer.role is LayerRole.CUTOUT
+    ]
+    if not cutout_top_down:
+        return assignments
+
+    top_cutout = cutout_top_down[0]
+    for shape in shapes:
+        spec = shape.spec
+        if shape.kind is ShapeKind.TEXT or spec.cut_type == CutType.ENGRAVE:
+            top_cutout.cuts.append(
+                ShapeLayerCut(shape.id, through=False,
+                              depth_in_layer_mm=min(spec.depth_mm, 2.0),
+                              is_surface=True)
+            )
+            continue
+        if spec.cut_type == CutType.FULL:
+            for assignment in cutout_top_down:
+                assignment.cuts.append(
+                    ShapeLayerCut(
+                        shape.id, through=True,
+                        depth_in_layer_mm=assignment.layer.thickness_mm,
+                    )
+                )
+            continue
+        # Poche : répartition selon la profondeur demandée.
+        for assignment, cut in zip(
+            cutout_top_down, pocket_cuts_per_layer(plan, spec.depth_mm)
+        ):
+            if cut.depth_in_layer_mm <= 0:
+                continue
+            assignment.cuts.append(
+                ShapeLayerCut(shape.id, through=cut.through,
+                              depth_in_layer_mm=cut.depth_in_layer_mm)
+            )
+    return assignments

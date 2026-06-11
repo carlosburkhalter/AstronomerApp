@@ -32,7 +32,7 @@ def _l_shape_sources() -> list[RectShape]:
 
 def test_merge_two_rects_makes_L() -> None:
     sources = _l_shape_sources()
-    merged = merge_shapes(sources, name="Équerre")
+    merged, = merge_shapes(sources, name="Équerre")
     assert isinstance(merged, PolygonShape)
     assert merged.spec.name == "Équerre"
     # Aire du L = somme des aires - chevauchement (40 × 40).
@@ -56,7 +56,7 @@ def test_subtract_circle_makes_notch() -> None:
                      spec=CutoutSpec(name="Boîtier", depth_mm=30))
     # Cercle à cheval sur le bord droit : encoche ouverte.
     notch = CircleShape(diameter_mm=30, x_mm=50, y_mm=0)
-    result = subtract_shapes(base, [notch])
+    result, = subtract_shapes(base, [notch])
     assert result.object_polygon().area < base.object_polygon().area
     assert "encoche" in result.spec.name
 
@@ -66,7 +66,7 @@ def test_subtract_inside_creates_hole() -> None:
     base = RectShape(width_mm=100, height_mm=100, x_mm=0, y_mm=0,
                      spec=CutoutSpec(margin_mm=0))
     hole = CircleShape(diameter_mm=30, x_mm=0, y_mm=0)
-    result = subtract_shapes(base, [hole])
+    result, = subtract_shapes(base, [hole])
     polygon = result.base_polygon()
     assert len(polygon.interiors) == 1
     assert polygon.area == pytest.approx(
@@ -84,7 +84,7 @@ def test_subtract_everything_fails() -> None:
 def test_intersection() -> None:
     a = RectShape(width_mm=60, height_mm=60, x_mm=0, y_mm=0)
     b = RectShape(width_mm=60, height_mm=60, x_mm=30, y_mm=30)
-    result = intersect_shapes([a, b])
+    result, = intersect_shapes([a, b])
     assert result.object_polygon().area == pytest.approx(30 * 30, rel=1e-6)
 
 
@@ -92,7 +92,7 @@ def test_compound_serialization_with_holes() -> None:
     """Les trous des formes composées survivent à la sauvegarde JSON."""
     base = RectShape(width_mm=100, height_mm=100, x_mm=50, y_mm=50)
     hole = CircleShape(diameter_mm=30, x_mm=50, y_mm=50)
-    compound = subtract_shapes(base, [hole])
+    compound, = subtract_shapes(base, [hole])
     restored = shape_from_dict(compound.to_dict())
     assert isinstance(restored, PolygonShape)
     assert len(restored.base_polygon().interiors) == 1
@@ -103,7 +103,7 @@ def test_compound_serialization_with_holes() -> None:
 
 def test_compound_margin_still_applies() -> None:
     """La marge de tolérance reste applicable à la forme composée."""
-    merged = merge_shapes(_l_shape_sources())
+    merged, = merge_shapes(_l_shape_sources())
     merged.spec.margin_mm = 0.0
     area_no_margin = merged.cut_polygon().area
     merged.spec.margin_mm = 3.0

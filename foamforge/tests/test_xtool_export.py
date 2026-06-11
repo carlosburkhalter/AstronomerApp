@@ -36,6 +36,9 @@ def _layered_project() -> Project:
     - une poche de 60 mm (traverse la couche du haut, 20 mm dans la 2e) ;
     - une découpe complète (traverse les deux couches découpées) ;
     - un texte gravé (surface de la couche du haut uniquement).
+
+    Empilement sans couvercle : fond 20 + compensation 20 + 2 × 40
+    découpées (la couche supérieure est toujours découpée).
     """
     project = Project(
         name="Valise lunette",
@@ -43,9 +46,9 @@ def _layered_project() -> Project:
         sheet=FoamSheet(width_mm=500, height_mm=300, thickness_mm=80),
         foam_layers=[
             FoamLayer(20.0, LayerRole.BOTTOM),
+            FoamLayer(20.0, LayerRole.SPACER),
             FoamLayer(40.0, LayerRole.CUTOUT),
             FoamLayer(40.0, LayerRole.CUTOUT),
-            FoamLayer(20.0, LayerRole.LID),
         ],
     )
     project.add_shape(RectShape(
@@ -132,24 +135,24 @@ def test_layer_files_naming_and_count(tmp_path: Path) -> None:
     names = [f.name for f in files]
     assert names == [
         "valise_lunette_LAYER_01_BOTTOM.svg",
-        "valise_lunette_LAYER_02_CUTOUT.svg",
+        "valise_lunette_LAYER_02_SPACER.svg",
         "valise_lunette_LAYER_03_CUTOUT.svg",
-        "valise_lunette_LAYER_04_LID.svg",
+        "valise_lunette_LAYER_04_CUTOUT.svg",
     ]
 
 
 def test_layer_cut_distribution(tmp_path: Path) -> None:
     project = _layered_project()
     files = export_layers_svg(project, tmp_path, base_name="v")
-    bottom, cut_low, cut_top, lid = files
+    bottom, spacer, cut_low, cut_top = files
 
     # Couches pleines : uniquement le contour de plaque.
-    for plain in (bottom, lid):
+    for plain in (bottom, spacer):
         assert len(_paths_in_layer(plain, LAYER_FOAM_BORDER)) == 1
         assert not _paths_in_layer(plain, LAYER_CUT_FULL)
         assert not _paths_in_layer(plain, LAYER_CUT_POCKET)
 
-    # Couche découpée supérieure (3e fichier) : poche 30 → partielle ;
+    # Couche découpée supérieure (4e fichier) : poche 30 → partielle ;
     # poche 60 → traversante ; découpe FULL → traversante. Total :
     # 2 FULL + 1 POCKET, plus le texte gravé.
     assert len(_paths_in_layer(cut_top, LAYER_CUT_FULL)) == 2
@@ -158,7 +161,7 @@ def test_layer_cut_distribution(tmp_path: Path) -> None:
     texts = root.findall(".//svg:text", _NS)
     assert any(t.text == "LUNETTE" for t in texts)
 
-    # Couche découpée inférieure (2e fichier) : poche 60 → 20 mm restants
+    # Couche découpée inférieure (3e fichier) : poche 60 → 20 mm restants
     # (partielle) ; découpe FULL → traversante ; poche 30 absente ;
     # pas de texte.
     assert len(_paths_in_layer(cut_low, LAYER_CUT_FULL)) == 1

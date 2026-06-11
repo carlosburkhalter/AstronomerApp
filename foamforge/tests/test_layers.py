@@ -31,11 +31,11 @@ def test_spec_example_120mm() -> None:
     # Une couche de fond intacte d'au moins 10 mm.
     bottom = [l for l in plan.layers if l.role is LayerRole.BOTTOM]
     assert bottom and sum(l.thickness_mm for l in bottom) >= 10
-    # Rôles cohérents : fond en premier, couvercle en dernier si présent.
+    # Rôles cohérents : fond en premier, couche découpée toujours au-dessus
+    # (le couvercle de la valise n'est jamais une couche de mousse).
     roles = [l.role for l in plan.layers]
     assert roles[0] is LayerRole.BOTTOM
-    if LayerRole.LID in roles:
-        assert roles[-1] is LayerRole.LID
+    assert roles[-1] is LayerRole.CUTOUT
 
 
 def test_exact_fill_simple() -> None:

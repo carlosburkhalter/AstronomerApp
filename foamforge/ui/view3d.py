@@ -32,7 +32,7 @@ _ROLE_COLORS = {
     LayerRole.BOTTOM: "#4a4a4a",
     LayerRole.SPACER: "#5a5a5a",
     LayerRole.CUTOUT: "#3a3a3a",
-    LayerRole.LID: "#6a6a6a",
+    LayerRole.SUPPORT: "#5f5f5f",
 }
 
 

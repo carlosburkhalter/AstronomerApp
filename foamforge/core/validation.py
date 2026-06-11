@@ -67,6 +67,7 @@ def validate_project(project: Project) -> list[Issue]:
     issues += _check_depths(project)
     issues += _check_object_heights(project)
     issues += _check_layer_plan(project)
+    issues += _check_corner_radius(cuts)
     issues += _check_inside_sheet(foam, cuts + texts)
     issues += _check_border_distance(project, foam, cuts)
     issues += _check_pairwise_distance(project, cuts)
@@ -178,6 +179,32 @@ def _check_layer_plan(project: Project) -> list[Issue]:
                 "recalculez les couches.",
             )
         )
+    return issues
+
+
+def _check_corner_radius(cuts: list[Shape]) -> list[Issue]:
+    """Rayon d'arrondi applicable : trop grand pour la géométrie = repli.
+
+    L'arrondi est appliqué par ouverture morphologique ; quand le rayon
+    dépasse la demi-largeur de la forme, le moteur retombe proprement sur
+    la géométrie non arrondie (l'objet ne disparaît jamais), mais
+    l'utilisateur doit en être informé : l'export ne correspondra pas à
+    son intention.
+    """
+    issues: list[Issue] = []
+    for shape in cuts:
+        if not shape.corner_radius_applied():
+            issues.append(
+                Issue(
+                    Severity.WARNING,
+                    "corner_radius_too_large",
+                    f"{_label(shape)} : rayon d'arrondi de "
+                    f"{shape.spec.corner_radius_mm:.1f} mm trop grand pour "
+                    "cette géométrie — les angles resteront vifs. "
+                    "Réduisez le rayon.",
+                    [shape.id],
+                )
+            )
     return issues
 
 

@@ -27,7 +27,7 @@ _ROLE_ICONS = {
     LayerRole.BOTTOM: "▂",
     LayerRole.SPACER: "▄",
     LayerRole.CUTOUT: "▣",
-    LayerRole.LID: "▔",
+    LayerRole.SUPPORT: "▆",
 }
 
 
